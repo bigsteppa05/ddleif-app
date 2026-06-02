@@ -1,0 +1,85 @@
+import { View, Text, Image, StyleSheet, TouchableOpacity } from 'react-native';
+import { useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
+import Animated, { SlideInRight } from 'react-native-reanimated';
+import { Colors } from '@/constants/colors';
+import type { Event } from '@/lib/mockData';
+import { formatDateTime } from '@/lib/events';
+
+type Props = { event: Event; index?: number };
+
+export function HomeEventCard({ event, index = 0 }: Props) {
+  const router = useRouter();
+
+  return (
+    <Animated.View entering={SlideInRight.delay(index * 70).duration(260)}>
+      <TouchableOpacity
+        style={styles.card}
+        activeOpacity={0.9}
+        onPress={() => router.push(`/event/${event.id}`)}
+      >
+        {event.image_url ? (
+          <Image source={{ uri: event.image_url }} style={styles.image} resizeMode="cover" />
+        ) : (
+          <View style={[styles.image, styles.imageFallback]}>
+            <Ionicons name="image-outline" size={32} color={Colors.textMuted} />
+          </View>
+        )}
+        <View style={styles.body}>
+          <Text style={styles.title} numberOfLines={1}>{event.title}</Text>
+          <View style={styles.row}>
+            <Ionicons name="calendar-outline" size={12} color={Colors.textSecondary} />
+            <Text style={styles.meta} numberOfLines={1}>{formatDateTime(event.date, event.time)}</Text>
+          </View>
+          <View style={styles.row}>
+            <Ionicons name="time-outline" size={12} color={Colors.textSecondary} />
+            <Text style={styles.meta}>{event.duration}</Text>
+          </View>
+          <View style={styles.row}>
+            <Ionicons name="location-outline" size={12} color={Colors.textSecondary} />
+            <Text style={styles.meta} numberOfLines={1}>{event.location}</Text>
+          </View>
+        </View>
+      </TouchableOpacity>
+    </Animated.View>
+  );
+}
+
+const styles = StyleSheet.create({
+  card: {
+    width: 260,
+    backgroundColor: Colors.surface,
+    borderRadius: 14,
+    overflow: 'hidden',
+    marginRight: 12,
+  },
+  image: {
+    width: '100%',
+    height: 155,
+  },
+  imageFallback: {
+    backgroundColor: Colors.surfaceElevated,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  body: {
+    padding: 12,
+    gap: 6,
+  },
+  title: {
+    color: Colors.textPrimary,
+    fontSize: 15,
+    fontWeight: '700',
+    marginBottom: 2,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  meta: {
+    color: Colors.textSecondary,
+    fontSize: 12,
+    flex: 1,
+  },
+});

@@ -1,0 +1,77 @@
+export const GENDERS = [
+  { label: 'Male', value: 'male' },
+  { label: 'Female', value: 'female' },
+  { label: 'Non-binary', value: 'non-binary' },
+  { label: 'Prefer not to say', value: 'prefer-not-to-say' },
+];
+
+export const COUNTRIES = [
+  { label: 'Kenya', value: 'KE' },
+  { label: 'Nigeria', value: 'NG' },
+  { label: 'South Africa', value: 'ZA' },
+  { label: 'Tanzania', value: 'TZ' },
+  { label: 'Uganda', value: 'UG' },
+  { label: 'Ghana', value: 'GH' },
+  { label: 'Ethiopia', value: 'ET' },
+  { label: 'Rwanda', value: 'RW' },
+  { label: 'Senegal', value: 'SN' },
+  { label: 'Côte d\'Ivoire', value: 'CI' },
+  { label: 'Cameroon', value: 'CM' },
+  { label: 'Egypt', value: 'EG' },
+  { label: 'Morocco', value: 'MA' },
+  { label: 'Algeria', value: 'DZ' },
+  { label: 'United Kingdom', value: 'GB' },
+  { label: 'United States', value: 'US' },
+  { label: 'Canada', value: 'CA' },
+  { label: 'Australia', value: 'AU' },
+  { label: 'France', value: 'FR' },
+  { label: 'Germany', value: 'DE' },
+  { label: 'Spain', value: 'ES' },
+  { label: 'Italy', value: 'IT' },
+  { label: 'Portugal', value: 'PT' },
+  { label: 'Netherlands', value: 'NL' },
+  { label: 'Brazil', value: 'BR' },
+  { label: 'India', value: 'IN' },
+  { label: 'UAE', value: 'AE' },
+  { label: 'Saudi Arabia', value: 'SA' },
+  { label: 'China', value: 'CN' },
+  { label: 'Japan', value: 'JP' },
+];
+
+export const VISIBILITY_OPTIONS = [
+  { label: 'Public', value: 'public' },
+  { label: 'Members only', value: 'members' },
+  { label: 'Private', value: 'private' },
+];
+
+export const DURATION_OPTIONS = [
+  { label: '30 min', value: '30 min' },
+  { label: '1 hr', value: '1 hr' },
+  { label: '1 hr 30 min', value: '1 hr 30 min' },
+  { label: '2 hr', value: '2 hr' },
+  { label: '2 hr 30 min', value: '2 hr 30 min' },
+  { label: '3 hr', value: '3 hr' },
+  { label: '3 hr 30 min', value: '3 hr 30 min' },
+  { label: '4 hr', value: '4 hr' },
+  { label: 'Open-ended', value: 'Open-ended' },
+];
+
+export const SPORTS = [
+  { label: 'Football', value: 'Football' },
+  { label: 'Basketball', value: 'Basketball' },
+  { label: 'Tennis', value: 'Tennis' },
+  { label: 'Rugby', value: 'Rugby' },
+  { label: 'Cricket', value: 'Cricket' },
+  { label: 'Volleyball', value: 'Volleyball' },
+  { label: 'Swimming', value: 'Swimming' },
+  { label: 'Running', value: 'Running' },
+  { label: 'Cycling', value: 'Cycling' },
+  { label: 'Badminton', value: 'Badminton' },
+  { label: 'Padel', value: 'Padel' },
+  { label: 'Squash', value: 'Squash' },
+  { label: 'Table Tennis', value: 'Table Tennis' },
+  { label: 'Boxing', value: 'Boxing' },
+  { label: 'Fitness / Gym', value: 'Fitness / Gym' },
+  { label: 'Yoga', value: 'Yoga' },
+  { label: 'Other', value: 'Other' },
+];
