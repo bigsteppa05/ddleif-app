@@ -7,6 +7,17 @@ WebBrowser.maybeCompleteAuthSession();
 
 export async function signInWithGoogle(): Promise<{ error: string | null }> {
   try {
+    // Web: full-page redirect back to the app's own origin (prod or localhost),
+    // let Supabase complete the session via detectSessionInUrl. No app-scheme,
+    // no in-app browser popup — those are the native-only path.
+    if (Platform.OS === 'web') {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: { redirectTo: window.location.origin },
+      });
+      return { error: error?.message ?? null };
+    }
+
     const redirectTo = makeRedirectUri({ scheme: 'fitxball', path: 'auth/callback' });
 
     const { data, error } = await supabase.auth.signInWithOAuth({
