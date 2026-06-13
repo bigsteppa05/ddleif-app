@@ -1,16 +1,18 @@
 import { useCallback, useRef, useState } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity, StyleSheet,
-  ActivityIndicator, Modal, Animated,
+  ActivityIndicator, Modal, Animated, TextInput,
 } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '@/constants/colors';
 import { EventCard } from '@/components/EventCard';
 import { supabase, getUserBookings, type BookingWithEvent } from '@/lib/supabase';
-import { getDisplayEvents, normalizeEvent } from '@/lib/events';
+import { getDisplayEvents, normalizeEvent, formatDateTime } from '@/lib/events';
 import type { Event } from '@/lib/mockData';
+import { FW, WChip, PageTitle, useIsDesktopWeb } from '@/components/web/kit';
+import { WEventCard } from '@/components/web/WEventCard';
 
 type Tab = 'events' | 'bookings';
 
@@ -19,6 +21,7 @@ const todayISO = new Date().toISOString().split('T')[0];
 const FILTER_SPORTS = ['Football', 'Padel', 'Basketball', 'Volleyball', 'Hiking', 'Watchparty'];
 
 type ListItem = Event | { type: 'divider'; label: string };
+type BookingListItem = BookingWithEvent | { type: 'divider'; label: string };
 
 function SectionDivider({ label }: { label: string }) {
   return (
@@ -38,12 +41,14 @@ const dividerStyles = StyleSheet.create({
 
 export default function BookScreen() {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<Tab>('events');
   const [events, setEvents] = useState<Event[]>([]);
   const [displayedEvents, setDisplayedEvents] = useState<Event[]>([]);
   const [eventsLoading, setEventsLoading] = useState(true);
-  const [bookingItems, setBookingItems] = useState<ListItem[]>([]);
+  const [bookingItems, setBookingItems] = useState<BookingListItem[]>([]);
   const [bookingsLoading, setBookingsLoading] = useState(true);
+  const [search, setSearch] = useState('');
 
   // Filter state
   const [filterSports, setFilterSports] = useState<string[]>([]);
@@ -72,20 +77,19 @@ export default function BookScreen() {
         }
 
         const bookings: BookingWithEvent[] = await getUserBookings(user.id);
-        const upcoming: Event[] = [];
-        const past: Event[] = [];
+        const upcoming: BookingWithEvent[] = [];
+        const past: BookingWithEvent[] = [];
 
         for (const b of bookings) {
           if (!b.events) continue;
-          const ev = normalizeEvent(b.events);
           if ((b.events.date ?? '') >= todayISO) {
-            upcoming.push(ev);
+            upcoming.push(b);
           } else {
-            past.push(ev);
+            past.push(b);
           }
         }
 
-        const items: ListItem[] = [...upcoming];
+        const items: BookingListItem[] = [...upcoming];
         if (past.length > 0) {
           items.push({ type: 'divider', label: 'Past Events' });
           items.push(...past);
@@ -144,7 +148,99 @@ export default function BookScreen() {
   }
 
   const isLoading = activeTab === 'events' ? eventsLoading : bookingsLoading;
-  const listData: ListItem[] = activeTab === 'events' ? displayedEvents : bookingItems;
+
+  const searchedEvents = search.trim()
+    ? displayedEvents.filter(
+        (e) =>
+          e.title.toLowerCase().includes(search.toLowerCase()) ||
+          e.location.toLowerCase().includes(search.toLowerCase()) ||
+          (e.sport ?? '').toLowerCase().includes(search.toLowerCase())
+      )
+    : displayedEvents;
+
+  const isDesktop = useIsDesktopWeb();
+
+  if (isDesktop) {
+    return (
+      <View>
+        <PageTitle
+          title="Explore"
+          right={
+            <View style={webStyles.searchBar}>
+              <Ionicons name="search-outline" size={17} color={FW.muted} />
+              <TextInput
+                style={webStyles.searchInput}
+                value={search}
+                onChangeText={setSearch}
+                placeholder="Search events, venues, sports…"
+                placeholderTextColor={FW.muted}
+                autoCorrect={false}
+              />
+              {search.length > 0 && (
+                <TouchableOpacity onPress={() => setSearch('')}>
+                  <Ionicons name="close-circle" size={16} color={FW.muted} />
+                </TouchableOpacity>
+              )}
+            </View>
+          }
+        />
+        <View style={webStyles.chipRow}>
+          <WChip
+            label="All sports"
+            active={filterSports.length === 0}
+            onPress={() => { setFilterSports([]); applyFilters([], filterDate); }}
+          />
+          {FILTER_SPORTS.map((sport) => {
+            const active = filterSports.includes(sport);
+            return (
+              <WChip
+                key={sport}
+                label={sport}
+                active={active}
+                onPress={() => {
+                  const next = active ? filterSports.filter((s) => s !== sport) : [...filterSports, sport];
+                  setFilterSports(next);
+                  applyFilters(next, filterDate);
+                }}
+              />
+            );
+          })}
+          <View style={webStyles.chipDivider} />
+          <WChip
+            label="This weekend"
+            icon="calendar-outline"
+            active={filterDate === 'weekend'}
+            onPress={() => {
+              const next = filterDate === 'weekend' ? 'all' : 'weekend';
+              setFilterDate(next);
+              applyFilters(filterSports, next);
+            }}
+          />
+        </View>
+        {eventsLoading ? (
+          <View style={{ paddingTop: 80, alignItems: 'center' }}>
+            <ActivityIndicator color={FW.primary} />
+          </View>
+        ) : searchedEvents.length === 0 ? (
+          <View style={webStyles.emptyState}>
+            <Ionicons name="search-outline" size={48} color={FW.muted} />
+            <Text style={webStyles.emptyTitle}>No events found</Text>
+            <Text style={webStyles.emptySub}>
+              {search || isFilterActive ? 'Try adjusting your search or filters.' : 'Check back soon for new events.'}
+            </Text>
+          </View>
+        ) : (
+          <View style={webStyles.grid}>
+            {searchedEvents.map((event) => (
+              <View key={event.id} style={webStyles.gridItem}>
+                <WEventCard event={event} onPress={() => router.push(`/event/${event.id}`)} />
+              </View>
+            ))}
+          </View>
+        )}
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.container, { paddingTop: insets.top + 12 }]}>
@@ -177,41 +273,112 @@ export default function BookScreen() {
         </TouchableOpacity>
       </View>
 
+      {/* Search bar — events tab only */}
+      {activeTab === 'events' && (
+        <View style={styles.searchWrap}>
+          <Ionicons name="search-outline" size={17} color={Colors.textMuted} />
+          <TextInput
+            style={styles.searchInput}
+            value={search}
+            onChangeText={setSearch}
+            placeholder="Search events…"
+            placeholderTextColor={Colors.textMuted}
+            autoCorrect={false}
+            returnKeyType="search"
+          />
+          {search.length > 0 && (
+            <TouchableOpacity onPress={() => setSearch('')}>
+              <Ionicons name="close-circle" size={16} color={Colors.textMuted} />
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
+
       {isLoading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator color={Colors.primary} />
         </View>
+      ) : activeTab === 'events' ? (
+        <FlatList
+          data={searchedEvents}
+          keyExtractor={(item) => item.id}
+          renderItem={({ item, index }) => <EventCard event={item} index={index} />}
+          contentContainerStyle={[styles.list, { paddingBottom: insets.bottom + 24 }]}
+          showsVerticalScrollIndicator={false}
+          ListEmptyComponent={
+            <View style={styles.empty}>
+              <Ionicons name="search-outline" size={48} color={Colors.textMuted} />
+              <Text style={styles.emptyTitle}>No events found</Text>
+              <Text style={styles.emptySubtitle}>
+                {search || isFilterActive ? 'Try adjusting your search or filters' : 'Check back soon for new events'}
+              </Text>
+              {(search || isFilterActive) && (
+                <TouchableOpacity
+                  onPress={() => { setSearch(''); setFilterSports([]); setFilterDate('all'); setDisplayedEvents(events); }}
+                  style={styles.clearFiltersBtn}
+                >
+                  <Text style={styles.clearFiltersText}>Clear All</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          }
+        />
       ) : (
         <FlatList
-          data={listData}
+          data={bookingItems}
           keyExtractor={(item, i) => ('id' in item ? item.id : `divider-${i}`)}
-          renderItem={({ item, index }) => {
+          renderItem={({ item }) => {
             if ('type' in item) return <SectionDivider label={item.label} />;
-            return <EventCard event={item} index={index} />;
+            if (!item.events) return null;
+            const ev = normalizeEvent(item.events);
+            const isUpcoming = (item.events.date ?? '') >= todayISO;
+            const isCheckedIn = item.status === 'checked_in';
+            return (
+              <TouchableOpacity
+                style={bookingCardStyles.card}
+                activeOpacity={0.85}
+                onPress={() => router.push(`/event/${item.event_id}`)}
+              >
+                <View style={bookingCardStyles.top}>
+                  <View style={bookingCardStyles.sportBadge}>
+                    <Text style={bookingCardStyles.sportText}>{ev.sport}</Text>
+                  </View>
+                  {isCheckedIn && (
+                    <View style={bookingCardStyles.checkedBadge}>
+                      <Ionicons name="checkmark-circle" size={12} color={Colors.primary} />
+                      <Text style={bookingCardStyles.checkedText}>Checked In</Text>
+                    </View>
+                  )}
+                </View>
+                <Text style={bookingCardStyles.title} numberOfLines={2}>{ev.title}</Text>
+                <View style={bookingCardStyles.metaRow}>
+                  <Ionicons name="calendar-outline" size={13} color={Colors.textMuted} />
+                  <Text style={bookingCardStyles.metaText}>{formatDateTime(ev.date, ev.time)}</Text>
+                </View>
+                <View style={bookingCardStyles.metaRow}>
+                  <Ionicons name="location-outline" size={13} color={Colors.textMuted} />
+                  <Text style={bookingCardStyles.metaText} numberOfLines={1}>{ev.location}</Text>
+                </View>
+                {isUpcoming && (
+                  <TouchableOpacity
+                    style={bookingCardStyles.ticketBtn}
+                    activeOpacity={0.8}
+                    onPress={() => router.push({ pathname: '/booking/ticket', params: { bookingId: item.id, eventId: item.event_id } })}
+                  >
+                    <Ionicons name="qr-code-outline" size={14} color={Colors.background} />
+                    <Text style={bookingCardStyles.ticketBtnText}>View Ticket</Text>
+                  </TouchableOpacity>
+                )}
+              </TouchableOpacity>
+            );
           }}
           contentContainerStyle={[styles.list, { paddingBottom: insets.bottom + 24 }]}
           showsVerticalScrollIndicator={false}
           ListEmptyComponent={
             <View style={styles.empty}>
               <Ionicons name="bookmark-outline" size={48} color={Colors.textMuted} />
-              <Text style={styles.emptyTitle}>
-                {activeTab === 'bookings' ? 'No bookings yet' : 'No events'}
-              </Text>
-              <Text style={styles.emptySubtitle}>
-                {activeTab === 'bookings'
-                  ? 'Browse events and book your first session'
-                  : isFilterActive
-                  ? 'Try adjusting or clearing your filters'
-                  : 'Check back soon for new events'}
-              </Text>
-              {isFilterActive && activeTab === 'events' && (
-                <TouchableOpacity
-                  onPress={() => { setFilterSports([]); setFilterDate('all'); setDisplayedEvents(events); }}
-                  style={styles.clearFiltersBtn}
-                >
-                  <Text style={styles.clearFiltersText}>Clear Filters</Text>
-                </TouchableOpacity>
-              )}
+              <Text style={styles.emptyTitle}>No bookings yet</Text>
+              <Text style={styles.emptySubtitle}>Browse events and book your first session</Text>
             </View>
           }
         />
@@ -291,11 +458,52 @@ export default function BookScreen() {
   );
 }
 
+const webStyles = StyleSheet.create({
+  searchBar: {
+    flexDirection: 'row', alignItems: 'center', gap: 11, width: 420,
+    backgroundColor: FW.surface, borderWidth: 1, borderColor: FW.border,
+    borderRadius: 999, paddingVertical: 12, paddingHorizontal: 18,
+  },
+  searchInput: { flex: 1, color: FW.text, fontSize: 14.5, padding: 0, outlineStyle: 'none' } as any,
+  chipRow: {
+    flexDirection: 'row', gap: 9, marginTop: 20, marginBottom: 28,
+    alignItems: 'center', flexWrap: 'wrap',
+  },
+  chipDivider: { width: 1, height: 24, backgroundColor: FW.border, marginHorizontal: 4 },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 16 },
+  gridItem: { width: '31.8%', minWidth: 260, flexGrow: 1, maxWidth: '32.5%' },
+  emptyState: { alignItems: 'center', paddingTop: 80, gap: 10 },
+  emptyTitle: { color: FW.text, fontSize: 18, fontWeight: '700', marginTop: 8 },
+  emptySub: { color: FW.sec, fontSize: 14, textAlign: 'center' },
+});
+
+const bookingCardStyles = StyleSheet.create({
+  card: { backgroundColor: Colors.surface, borderRadius: 16, padding: 14, marginBottom: 10, gap: 7 },
+  top: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  sportBadge: { backgroundColor: Colors.surfaceElevated, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
+  sportText: { color: Colors.textSecondary, fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.4 },
+  checkedBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: `${Colors.primary}1A`, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 3 },
+  checkedText: { color: Colors.primary, fontSize: 11, fontWeight: '700' },
+  title: { color: Colors.textPrimary, fontSize: 16, fontWeight: '800' },
+  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  metaText: { color: Colors.textSecondary, fontSize: 13, flex: 1 },
+  ticketBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: Colors.primary, borderRadius: 10, paddingVertical: 9, marginTop: 2 },
+  ticketBtnText: { color: Colors.background, fontSize: 13, fontWeight: '800' },
+});
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.background,
   },
+  searchWrap: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    marginHorizontal: 16, marginBottom: 10,
+    backgroundColor: Colors.surface,
+    borderWidth: 1, borderColor: Colors.border,
+    borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10,
+  },
+  searchInput: { flex: 1, color: Colors.textPrimary, fontSize: 14 },
   toggleRow: {
     flexDirection: 'row',
     alignItems: 'center',

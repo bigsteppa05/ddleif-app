@@ -1,5 +1,5 @@
 import { getEvents, getEventById, type Event as SupabaseEvent } from '@/lib/supabase';
-import { MOCK_EVENTS, MOCK_PAST_EVENTS, type Event as DisplayEvent } from '@/lib/mockData';
+import type { Event as DisplayEvent } from '@/lib/mockData';
 
 function formatEventDate(iso: string): string {
   if (!iso) return iso;
@@ -55,20 +55,16 @@ export function normalizeEvent(e: SupabaseEvent): DisplayEvent {
   };
 }
 
-// Returns real events from Supabase first, then mock events as fallback content.
 export async function getDisplayEvents(): Promise<DisplayEvent[]> {
   try {
     const real = await getEvents();
-    return [...real.map(normalizeEvent), ...MOCK_EVENTS];
+    return real.map(normalizeEvent);
   } catch {
-    return MOCK_EVENTS;
+    return [];
   }
 }
 
-// Looks up by id in mock first (fast), then falls back to Supabase for real event IDs.
 export async function getDisplayEvent(id: string): Promise<DisplayEvent | null> {
-  const mock = [...MOCK_EVENTS, ...MOCK_PAST_EVENTS].find((e) => e.id === id);
-  if (mock) return mock;
   try {
     const data = await getEventById(id);
     return data ? normalizeEvent(data) : null;

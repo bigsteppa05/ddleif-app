@@ -14,6 +14,8 @@ import QRCode from 'react-native-qrcode-svg';
 import { supabase } from '@/lib/supabase';
 import { formatDateTime } from '@/lib/events';
 import { Colors } from '@/constants/colors';
+import { FW, WTag, useIsDesktopWeb } from '@/components/web/kit';
+import { WebShell } from '@/components/web/WebShell';
 
 type TicketData = {
   bookingRef: string;
@@ -28,6 +30,7 @@ type TicketData = {
 export default function TicketScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const isDesktop = useIsDesktopWeb();
   const { bookingId, eventId } = useLocalSearchParams<{ bookingId: string; eventId: string }>();
 
   const [ticket, setTicket] = useState<TicketData | null>(null);
@@ -75,7 +78,91 @@ export default function TicketScreen() {
   }
 
   // QR encodes only the booking_ref — scanner uses its own eventId for ownership check
-  const qrValue = `https://fieldd.app/t/${ticket.bookingRef}`;
+  const qrValue = `https://fitxball.app/t/${ticket.bookingRef}`;
+
+  if (isDesktop) {
+    return (
+      <WebShell>
+        <TouchableOpacity
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 }}
+          onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)/bookings'))}
+        >
+          <Ionicons name="arrow-back" size={16} color={FW.sec} />
+          <Text style={{ fontSize: 14, fontWeight: '600', color: FW.sec }}>My Bookings</Text>
+        </TouchableOpacity>
+        <View style={{
+          flex: 1, flexDirection: 'row', gap: 40,
+          alignItems: 'center', justifyContent: 'center', paddingVertical: 40,
+        }}>
+          {/* White ticket */}
+          <View style={{
+            width: 360, backgroundColor: '#fff', borderRadius: 22, overflow: 'hidden',
+            boxShadow: '0 30px 80px rgba(0,0,0,0.5)',
+          } as any}>
+            <View style={{
+              paddingTop: 22, paddingHorizontal: 26, paddingBottom: 18,
+              flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+            }}>
+              <Text style={{ fontSize: 20, fontWeight: '900', letterSpacing: -0.8, color: '#0C0C0C' }}>fitXball</Text>
+              <WTag label="Entry ticket" tone="lime" />
+            </View>
+            <View style={{ paddingHorizontal: 26, paddingBottom: 20 }}>
+              <Text style={{ fontSize: 21, fontWeight: '800', color: '#111', letterSpacing: -0.4 }}>
+                {ticket.eventTitle}
+              </Text>
+              <View style={{ marginTop: 10, gap: 6 }}>
+                {([
+                  [formatDateTime(ticket.date, ticket.time), 'calendar-outline'],
+                  [ticket.location, 'location-outline'],
+                ] as Array<[string, any]>).map(([t, ic]) => (
+                  <View key={t} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Ionicons name={ic} size={15} color="#999" />
+                    <Text style={{ fontSize: 13.5, color: '#555' }}>{t}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+            <View style={{ marginHorizontal: 18, borderTopWidth: 2, borderStyle: 'dashed', borderColor: '#D8D8D8' }} />
+            <View style={{ paddingTop: 24, paddingHorizontal: 26, paddingBottom: 26, alignItems: 'center', gap: 14 }}>
+              <QRCode value={qrValue} size={188} color="#000000" backgroundColor="#ffffff" />
+              <View style={{ alignItems: 'center' }}>
+                <Text style={{
+                  fontSize: 11, fontWeight: '700', letterSpacing: 1,
+                  textTransform: 'uppercase', color: '#999',
+                }}>Booking reference</Text>
+                <Text style={{
+                  fontSize: 21, fontWeight: '800', color: '#111', letterSpacing: 2,
+                  marginTop: 4, fontFamily: FW.mono,
+                }}>{ticket.bookingRef}</Text>
+              </View>
+            </View>
+          </View>
+          {/* Side info */}
+          <View style={{ width: 320, gap: 22 }}>
+            <View>
+              <Text style={{ fontSize: 26, fontWeight: '800', color: FW.text, letterSpacing: -0.6, lineHeight: 31 }}>
+                Show this at{'\n'}the gate.
+              </Text>
+              <Text style={{ marginTop: 12, fontSize: 14.5, color: FW.sec, lineHeight: 23 }}>
+                The organiser scans your QR to check you in. Screenshot a copy in case the
+                signal at the venue is patchy.
+              </Text>
+            </View>
+            <View style={{
+              flexDirection: 'row', alignItems: 'center', gap: 10,
+              paddingVertical: 14, paddingHorizontal: 18,
+              backgroundColor: FW.surface, borderWidth: 1, borderColor: FW.border, borderRadius: 14,
+            }}>
+              <View style={{
+                width: 8, height: 8, borderRadius: 4, backgroundColor: FW.primary, flexShrink: 0,
+              }} />
+              <Text style={{ fontSize: 13, color: FW.sec }}>Arrive 15 minutes early for check-in</Text>
+            </View>
+          </View>
+        </View>
+      </WebShell>
+    );
+  }
 
   return (
     <View style={[styles.container, { paddingTop: insets.top + 12 }]}>

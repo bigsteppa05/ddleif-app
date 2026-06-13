@@ -1,8 +1,12 @@
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { useEffect } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '@/constants/colors';
+import { scheduleBookingConfirmation, scheduleEventReminder } from '@/lib/notifications';
+import { FW, WBtn, WGhostBtn, WTag, useIsDesktopWeb } from '@/components/web/kit';
+import { WebShell } from '@/components/web/WebShell';
 
 export default function BookingConfirmedScreen() {
   const router = useRouter();
@@ -18,6 +22,72 @@ export default function BookingConfirmedScreen() {
       duration: string;
       location: string;
     }>();
+
+  useEffect(() => {
+    if (!title || Platform.OS === 'web') return;
+    scheduleBookingConfirmation(title);
+    if (date && bookingId && location) {
+      scheduleEventReminder(bookingId, title, location, date, time ?? '');
+    }
+  }, []);
+
+  const isDesktop = useIsDesktopWeb();
+
+  if (isDesktop) {
+    return (
+      <WebShell>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 48 }}>
+          <View style={{ width: 560, alignItems: 'center' }}>
+            <View style={{
+              width: 88, height: 88, borderRadius: 44, backgroundColor: FW.primary,
+              alignItems: 'center', justifyContent: 'center',
+              boxShadow: '0 0 70px rgba(200,255,0,0.3)',
+            } as any}>
+              <Ionicons name="checkmark" size={44} color="#0C0C0C" />
+            </View>
+            <Text style={{ marginTop: 28, fontSize: 32, fontWeight: '800', color: FW.text, letterSpacing: -0.7 }}>
+              You're in!
+            </Text>
+            <Text style={{
+              marginTop: 10, fontSize: 15, color: FW.sec, lineHeight: 23,
+              maxWidth: 400, textAlign: 'center',
+            }}>
+              Your slot is confirmed. Show your QR ticket at the gate.
+            </Text>
+            <View style={{
+              marginTop: 32, width: '100%', backgroundColor: FW.surface,
+              borderWidth: 1, borderColor: FW.border, borderRadius: 18,
+              paddingVertical: 22, paddingHorizontal: 26, gap: 13,
+            }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text style={{ fontSize: 16.5, fontWeight: '800', color: FW.text }}>{title ?? 'Event'}</Text>
+                <WTag label="Confirmed" tone="limeSoft" />
+              </View>
+              {([
+                ['When', [date, time, duration].filter(Boolean).join(' · ') || '—'],
+                ['Where', location ?? '—'],
+              ] as Array<[string, string]>).map(([k, v]) => (
+                <View key={k} style={{
+                  flexDirection: 'row', justifyContent: 'space-between', gap: 16,
+                  paddingTop: 13, borderTopWidth: 1, borderTopColor: FW.borderSoft,
+                }}>
+                  <Text style={{ fontSize: 13.5, color: FW.sec }}>{k}</Text>
+                  <Text style={{ fontSize: 13.5, fontWeight: '700', color: FW.text, flexShrink: 1 }}>{v}</Text>
+                </View>
+              ))}
+            </View>
+            <View style={{ marginTop: 24, flexDirection: 'row', gap: 12 }}>
+              <WBtn
+                label="View Ticket" icon="qr-code-outline"
+                onPress={() => router.push({ pathname: '/booking/ticket', params: { bookingId, eventId } })}
+              />
+              <WGhostBtn label="Back to Home" onPress={() => router.replace('/(tabs)')} />
+            </View>
+          </View>
+        </View>
+      </WebShell>
+    );
+  }
 
   return (
     <View style={[styles.container, { paddingTop: insets.top + 24 }]}>

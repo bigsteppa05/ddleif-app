@@ -4,17 +4,44 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import { Colors } from '@/constants/colors';
+import { AuthShell, AuthHeading, LimeLink, WGhostBtn, FW, useIsDesktopWeb } from '@/components/web/kit';
 
 export default function CheckInboxScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const isDesktop = useIsDesktopWeb();
   const { email } = useLocalSearchParams<{ email: string }>();
 
   async function handleResend() {
     if (!email) return;
     await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: 'fieldd://reset-password',
+      redirectTo: 'fitxball://reset-password',
     });
+  }
+
+  if (isDesktop) {
+    return (
+      <AuthShell
+        footer={
+          <Text style={{ fontSize: 13.5, color: FW.sec }}>
+            Didn't get it? <LimeLink onPress={handleResend}>Resend email</LimeLink> · check your spam folder
+          </Text>
+        }
+      >
+        <View style={{
+          width: 72, height: 72, borderRadius: 20, backgroundColor: FW.surface,
+          borderWidth: 1, borderColor: FW.border, alignItems: 'center',
+          justifyContent: 'center', marginBottom: 28,
+        }}>
+          <Ionicons name="mail-outline" size={32} color={FW.primary} />
+        </View>
+        <AuthHeading
+          title="Check your inbox"
+          sub={`We sent a reset link to ${email ?? 'your email'}. The link expires in 30 minutes.`}
+        />
+        <WGhostBtn label="Back to Sign In" size="lg" full onPress={() => router.replace('/(auth)/login')} />
+      </AuthShell>
+    );
   }
 
   return (

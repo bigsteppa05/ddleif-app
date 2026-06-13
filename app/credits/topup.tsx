@@ -12,12 +12,22 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '@/constants/colors';
+import { supabase } from '@/lib/supabase';
+import { KES_PER_CREDIT } from '@/constants/payments';
+import { notifyCreditsChanged } from '@/lib/credits';
+import { FW, WBtn, WLabel, PageTitle, useIsDesktopWeb } from '@/components/web/kit';
+import { WebShell } from '@/components/web/WebShell';
+
+type PayState = 'idle' | 'requesting' | 'waiting' | 'success' | 'failed';
+
+const POLL_INTERVAL_MS = 3000;
+const POLL_TIMEOUT_MS = 120_000; // STK prompts expire after ~60-90s
 
 const CREDIT_PACKS = [
-  { credits: 100, kes: 100, label: null },
-  { credits: 250, kes: 250, label: null },
-  { credits: 500, kes: 475, label: '5% off' },
-  { credits: 1000, kes: 900, label: '10% off' },
+  { credits: 10, kes: 10 * KES_PER_CREDIT, label: null },
+  { credits: 25, kes: 25 * KES_PER_CREDIT, label: null },
+  { credits: 50, kes: Math.round(50 * KES_PER_CREDIT * 0.95), label: '5% off' },
+  { credits: 100, kes: Math.round(100 * KES_PER_CREDIT * 0.9), label: '10% off' },
 ] as const;
 
 const PAYMENT_METHODS = [
@@ -34,7 +44,20 @@ export default function TopUpScreen() {
   const [customError, setCustomError] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<'mpesa' | 'card'>('mpesa');
   const [toastMsg, setToastMsg] = useState('');
+  const [phone, setPhone] = useState('');
+  const [payState, setPayState] = useState<PayState>('idle');
+  const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const toastSlide = useRef(new Animated.Value(80)).current;
+
+  // Prefill phone from the user's profile; clear any poll on unmount
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user) return;
+      supabase.from('profiles').select('phone').eq('id', user.id).single()
+        .then(({ data }) => { if (data?.phone) setPhone(data.phone); });
+    });
+    return () => { if (pollTimer.current) clearInterval(pollTimer.current); };
+  }, []);
 
   useEffect(() => {
     if (!toastMsg) return;
@@ -50,14 +73,242 @@ export default function TopUpScreen() {
 
   const isCustom = selectedPack === null;
   const customCredits = parseInt(customAmount, 10);
-  const customValid = !isNaN(customCredits) && customCredits >= 50;
-  const totalKes = isCustom ? (customValid ? customCredits : 0) : CREDIT_PACKS[selectedPack!].kes;
+  const customValid = !isNaN(customCredits) && customCredits >= 5;
+  const totalKes = isCustom ? (customValid ? customCredits * KES_PER_CREDIT : 0) : CREDIT_PACKS[selectedPack!].kes;
   const totalCredits = isCustom ? (customValid ? customCredits : 0) : CREDIT_PACKS[selectedPack!].credits;
   const canPay = totalKes > 0;
 
-  function handlePay() {
-    if (!canPay) return;
-    setToastMsg('Payments coming soon. Stay tuned!');
+  function pollPayment(checkoutRequestId: string) {
+    const startedAt = Date.now();
+    pollTimer.current = setInterval(async () => {
+      if (Date.now() - startedAt > POLL_TIMEOUT_MS) {
+        if (pollTimer.current) clearInterval(pollTimer.current);
+        setPayState('failed');
+        setToastMsg('Payment timed out. If you entered your PIN, credits will still arrive shortly.');
+        return;
+      }
+      const { data } = await supabase
+        .from('payments')
+        .select('status, result_desc, credits')
+        .eq('checkout_request_id', checkoutRequestId)
+        .single();
+      if (!data || data.status === 'pending') return;
+      if (pollTimer.current) clearInterval(pollTimer.current);
+      if (data.status === 'success') {
+        setPayState('success');
+        setToastMsg(`${data.credits} credits added to your account! 🎉`);
+        notifyCreditsChanged();
+      } else {
+        setPayState('failed');
+        setToastMsg(data.result_desc || 'Payment was not completed.');
+      }
+    }, POLL_INTERVAL_MS);
+  }
+
+  async function handlePay() {
+    if (!canPay || payState === 'requesting' || payState === 'waiting') return;
+    if (paymentMethod === 'card') {
+      setToastMsg('Card payments coming soon — use M-Pesa for now.');
+      return;
+    }
+    if (!/^(?:254|0)(7|1)\d{8}$/.test(phone.replace(/\D/g, ''))) {
+      setPayState('failed');
+      setToastMsg('Enter a valid M-Pesa number, e.g. 0712345678.');
+      return;
+    }
+    setPayState('requesting');
+    const { data, error } = await supabase.functions.invoke('mpesa-stk-push', {
+      body: { amount: totalKes, credits: totalCredits, phone },
+    });
+    if (error || !data?.checkout_request_id) {
+      setPayState('failed');
+      setToastMsg(data?.message || 'Could not start the M-Pesa payment. Try again.');
+      return;
+    }
+    setPayState('waiting');
+    setToastMsg('Check your phone and enter your M-Pesa PIN…');
+    pollPayment(data.checkout_request_id);
+  }
+
+  const paying = payState === 'requesting' || payState === 'waiting';
+  const payLabel = payState === 'requesting' ? 'Sending…'
+    : payState === 'waiting' ? 'Waiting for M-Pesa PIN…'
+    : payState === 'success' ? 'Paid ✓'
+    : canPay ? `Pay KES ${totalKes}` : 'Select an amount';
+
+  const isDesktop = useIsDesktopWeb();
+
+  if (isDesktop) {
+    return (
+      <WebShell>
+        <TouchableOpacity
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 20 }}
+          onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)/profile'))}
+        >
+          <Ionicons name="arrow-back" size={16} color={FW.sec} />
+          <Text style={{ fontSize: 14, fontWeight: '600', color: FW.sec }}>Profile</Text>
+        </TouchableOpacity>
+        <PageTitle title="Top up credits" sub={`1 credit = KES ${KES_PER_CREDIT}. Bigger packs carry a discount.`} />
+        <View style={{ flexDirection: 'row', gap: 28, marginTop: 24, alignItems: 'flex-start' }}>
+          {/* Left: packs + custom + method */}
+          <View style={{ flex: 1, gap: 30 }}>
+            <View>
+              <WLabel>Choose a pack</WLabel>
+              <View style={{ flexDirection: 'row', gap: 14, marginTop: 12 }}>
+                {CREDIT_PACKS.map((pack, idx) => {
+                  const selected = selectedPack === idx;
+                  return (
+                    <TouchableOpacity
+                      key={idx}
+                      style={{
+                        flex: 1, position: 'relative', backgroundColor: FW.surface,
+                        borderRadius: 16, paddingVertical: 20, paddingHorizontal: 22,
+                        borderWidth: 1.5, borderColor: selected ? FW.primary : FW.border,
+                      }}
+                      onPress={() => { setSelectedPack(idx); setCustomAmount(''); setCustomError(''); }}
+                      activeOpacity={0.8}
+                    >
+                      {pack.label && (
+                        <View style={{
+                          position: 'absolute', top: -10, right: 14, backgroundColor: FW.primary,
+                          paddingHorizontal: 9, paddingVertical: 3, borderRadius: 6,
+                        }}>
+                          <Text style={{
+                            color: '#0C0C0C', fontSize: 10.5, fontWeight: '800',
+                            letterSpacing: 0.5, textTransform: 'uppercase',
+                          }}>{pack.label}</Text>
+                        </View>
+                      )}
+                      <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 5 }}>
+                        <Text style={{ fontSize: 26, fontWeight: '800', color: FW.text, letterSpacing: -0.7 }}>
+                          {pack.credits}
+                        </Text>
+                        <Text style={{ fontSize: 12.5, color: FW.muted }}>cr</Text>
+                      </View>
+                      <Text style={{
+                        marginTop: 6, fontSize: 13.5, fontWeight: '600',
+                        color: selected ? FW.primary : FW.sec,
+                      }}>KES {pack.kes.toLocaleString()}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+            <View style={{ maxWidth: 320, gap: 8 }}>
+              <WLabel>Or enter a custom amount</WLabel>
+              <View style={{
+                flexDirection: 'row', alignItems: 'center', backgroundColor: FW.surface,
+                borderRadius: 12, borderWidth: 1,
+                borderColor: customError ? FW.error : isCustom && customAmount ? FW.primary : FW.border,
+                paddingHorizontal: 16,
+              }}>
+                <TextInput
+                  style={{ flex: 1, color: FW.text, fontSize: 15, paddingVertical: 13, outlineStyle: 'none' } as any}
+                  value={customAmount}
+                  onChangeText={(v) => {
+                    setCustomAmount(v.replace(/[^0-9]/g, ''));
+                    setCustomError('');
+                    setSelectedPack(null);
+                  }}
+                  onBlur={() => {
+                    if (customAmount && !customValid) setCustomError('Minimum 5 credits');
+                  }}
+                  placeholder="Minimum 5 credits"
+                  placeholderTextColor={FW.muted}
+                  keyboardType="number-pad"
+                />
+                <Text style={{ color: FW.muted, fontSize: 14 }}>credits</Text>
+              </View>
+              {!!customError && <Text style={{ color: FW.error, fontSize: 12.5 }}>{customError}</Text>}
+            </View>
+            <View>
+              <WLabel>Payment method</WLabel>
+              <View style={{ flexDirection: 'row', gap: 14, marginTop: 12, maxWidth: 560 }}>
+                {PAYMENT_METHODS.map((m) => {
+                  const active = paymentMethod === m.id;
+                  return (
+                    <TouchableOpacity
+                      key={m.id}
+                      style={{
+                        flex: 1, flexDirection: 'row', alignItems: 'center', gap: 14,
+                        paddingVertical: 16, paddingHorizontal: 18,
+                        backgroundColor: FW.surface, borderRadius: 14,
+                        borderWidth: 1.5, borderColor: active ? FW.primary : FW.border,
+                      }}
+                      onPress={() => setPaymentMethod(m.id as 'mpesa' | 'card')}
+                      activeOpacity={0.8}
+                    >
+                      <View style={{
+                        width: 40, height: 40, borderRadius: 11, backgroundColor: FW.surfaceEl,
+                        alignItems: 'center', justifyContent: 'center',
+                      }}>
+                        <Ionicons name={m.icon as any} size={19} color={active ? FW.primary : FW.sec} />
+                      </View>
+                      <Text style={{ flex: 1, fontSize: 14.5, fontWeight: '700', color: FW.text }}>{m.label}</Text>
+                      <View style={{
+                        width: 18, height: 18, borderRadius: 9, borderWidth: 2,
+                        borderColor: active ? FW.primary : FW.muted,
+                        alignItems: 'center', justifyContent: 'center',
+                      }}>
+                        {active && <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: FW.primary }} />}
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+          </View>
+          {/* Right: summary */}
+          <View style={{
+            width: 360, flexShrink: 0, backgroundColor: FW.surface,
+            borderWidth: 1, borderColor: FW.border, borderRadius: 20, padding: 26, gap: 16,
+          }}>
+            <Text style={{ fontSize: 16, fontWeight: '800', color: FW.text }}>Summary</Text>
+            {([
+              ['Pack', canPay ? `${totalCredits} credits` : '—'],
+              ['Price', canPay ? `KES ${totalKes}` : '—'],
+              ['Payment', paymentMethod === 'mpesa' ? 'M-Pesa' : 'Card'],
+            ] as Array<[string, string]>).map(([k, v]) => (
+              <View key={k} style={{
+                flexDirection: 'row', justifyContent: 'space-between',
+                paddingTop: 14, borderTopWidth: 1, borderTopColor: FW.borderSoft,
+              }}>
+                <Text style={{ fontSize: 13.5, color: FW.sec }}>{k}</Text>
+                <Text style={{ fontSize: 13.5, fontWeight: '700', color: FW.text }}>{v}</Text>
+              </View>
+            ))}
+            {paymentMethod === 'mpesa' && (
+              <View style={{ gap: 6 }}>
+                <WLabel>M-Pesa number</WLabel>
+                <TextInput
+                  style={{
+                    backgroundColor: FW.surfaceEl, borderWidth: 1, borderColor: FW.border,
+                    borderRadius: 12, paddingVertical: 12, paddingHorizontal: 14,
+                    color: FW.text, fontSize: 14.5, outlineStyle: 'none',
+                  } as any}
+                  value={phone}
+                  onChangeText={setPhone}
+                  placeholder="0712345678"
+                  placeholderTextColor={FW.muted}
+                  keyboardType="phone-pad"
+                  editable={!paying}
+                />
+              </View>
+            )}
+            <WBtn
+              label={payLabel}
+              size="lg" full dim={!canPay || paying} onPress={handlePay} style={{ marginTop: 4 }}
+            />
+            {!!toastMsg && (
+              <Text style={{ fontSize: 13, color: FW.primary, textAlign: 'center' }}>{toastMsg}</Text>
+            )}
+            <Text style={{ fontSize: 12, color: FW.muted, textAlign: 'center', lineHeight: 18 }}>
+              {paymentMethod === 'mpesa' ? "You'll get an M-Pesa prompt on your phone to confirm." : 'Visa and Mastercard accepted.'}
+            </Text>
+          </View>
+        </View>
+      </WebShell>
+    );
   }
 
   return (
@@ -115,7 +366,7 @@ export default function TopUpScreen() {
             }}
             onBlur={() => {
               if (customAmount && !customValid) {
-                setCustomError('Minimum 50 credits');
+                setCustomError('Minimum 5 credits');
               }
             }}
             placeholder="e.g. 200"
@@ -125,7 +376,7 @@ export default function TopUpScreen() {
           <Text style={styles.inputSuffix}>credits</Text>
         </View>
         {!!customError && <Text style={styles.errorText}>{customError}</Text>}
-        <Text style={styles.equivalenceNote}>1 credit = KES 1</Text>
+        <Text style={styles.equivalenceNote}>1 credit = KES {KES_PER_CREDIT}</Text>
 
         {/* Payment method */}
         <Text style={styles.sectionLabel}>Payment Method</Text>
@@ -149,18 +400,37 @@ export default function TopUpScreen() {
             );
           })}
         </View>
+
+        {/* M-Pesa number */}
+        {paymentMethod === 'mpesa' && (
+          <>
+            <Text style={styles.sectionLabel}>M-Pesa Number</Text>
+            <View style={styles.inputWrap}>
+              <TextInput
+                style={styles.input}
+                value={phone}
+                onChangeText={setPhone}
+                placeholder="0712345678"
+                placeholderTextColor={Colors.textMuted}
+                keyboardType="phone-pad"
+                editable={!paying}
+              />
+            </View>
+          </>
+        )}
       </ScrollView>
 
       {/* Pay button */}
       <View style={[styles.bottomBar, { paddingBottom: insets.bottom + 16 }]}>
         <TouchableOpacity
-          style={[styles.payBtn, !canPay && styles.payBtnDisabled]}
+          style={[styles.payBtn, (!canPay || paying) && styles.payBtnDisabled]}
           onPress={handlePay}
           activeOpacity={0.85}
-          disabled={!canPay}
+          disabled={!canPay || paying}
         >
-          <Text style={[styles.payBtnText, !canPay && styles.payBtnTextDisabled]}>
-            {canPay ? `Pay KES ${totalKes}  ·  ${totalCredits} Credits` : 'Select an amount'}
+          <Text style={[styles.payBtnText, (!canPay || paying) && styles.payBtnTextDisabled]}>
+            {paying || payState === 'success' ? payLabel
+              : canPay ? `Pay KES ${totalKes}  ·  ${totalCredits} Credits` : 'Select an amount'}
           </Text>
         </TouchableOpacity>
       </View>

@@ -1,5 +1,5 @@
 import { useCallback, useState, useEffect, useRef } from 'react';
-import { ScrollView, View, Text, TouchableOpacity, StyleSheet, Image, Modal, Animated } from 'react-native';
+import { ScrollView, View, Text, TouchableOpacity, StyleSheet, Image, Modal, Animated, Platform } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as SecureStore from 'expo-secure-store';
@@ -8,6 +8,9 @@ import { HomeEventCard } from '@/components/HomeEventCard';
 import { supabase, getUserProfile, getUserBookings, type Profile, type BookingWithEvent } from '@/lib/supabase';
 import { getDisplayEvents, normalizeEvent, formatDateTime } from '@/lib/events';
 import type { Event } from '@/lib/mockData';
+import { Ionicons } from '@expo/vector-icons';
+import { FW, WBtn, WGhostBtn, WTag, StatBlock, MetaRow, PageTitle, useIsDesktopWeb } from '@/components/web/kit';
+import { WEventCard } from '@/components/web/WEventCard';
 
 function HeaderAvatar({ profile }: { profile: Profile | null }) {
   if (!profile) {
@@ -53,11 +56,13 @@ export default function HomeScreen() {
         setEvents(allEvents.slice(0, 5));
         setBookings(userBookings.filter((b) => (b.events?.date ?? '') >= todayISO));
 
-        const flag = await SecureStore.getItemAsync('onboarding_needed');
-        if (flag !== null) {
-          await SecureStore.deleteItemAsync('onboarding_needed');
-          setShowWelcome(true);
-          Animated.spring(welcomeSlide, { toValue: 0, friction: 8, tension: 60, useNativeDriver: true }).start();
+        if (Platform.OS !== 'web') {
+          const flag = await SecureStore.getItemAsync('onboarding_needed');
+          if (flag !== null) {
+            await SecureStore.deleteItemAsync('onboarding_needed');
+            setShowWelcome(true);
+            Animated.spring(welcomeSlide, { toValue: 0, friction: 8, tension: 60, useNativeDriver: true }).start();
+          }
         }
       }
       load();
@@ -73,6 +78,72 @@ export default function HomeScreen() {
   const firstName = profile
     ? (profile.name?.trim() || profile.email?.split('@')[0] || 'User').split(' ')[0]
     : '…';
+
+  const isDesktop = useIsDesktopWeb();
+
+  if (isDesktop) {
+    const nextBooking = bookings[0];
+    const nextEv = nextBooking?.events ? normalizeEvent(nextBooking.events) : null;
+    const hour = new Date().getHours();
+    const greeting = hour < 12 ? 'Morning' : hour < 18 ? 'Afternoon' : 'Evening';
+    const dateKicker = new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
+
+    return (
+      <View>
+        <PageTitle
+          kicker={dateKicker}
+          title={`${greeting}, ${firstName}.`}
+          right={<WBtn label="Find a Game" icon="search" onPress={() => router.push('/(tabs)/book')} />}
+        />
+        <View style={{ flexDirection: 'row', gap: 14, marginTop: 24, marginBottom: 28 }}>
+          <StatBlock label="Upcoming games" value={bookings.length} />
+          <StatBlock label="Events available" value={events.length} />
+          <StatBlock label="Credit balance" value={profile?.credits ?? 0} suffix="cr" />
+        </View>
+
+        {nextEv && nextBooking ? (
+          <View style={desktopStyles.hero}>
+            {nextEv.image_url ? (
+              <Image source={{ uri: nextEv.image_url }} style={StyleSheet.absoluteFill as any} />
+            ) : null}
+            <View style={desktopStyles.heroOverlay} />
+            <View style={desktopStyles.heroContent}>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <WTag label="Your next game" tone="lime" />
+              </View>
+              <Text style={desktopStyles.heroTitle}>{nextEv.title}</Text>
+              <View style={{ flexDirection: 'row', gap: 22, flexWrap: 'wrap' }}>
+                <MetaRow icon="calendar-outline" color="#D8D8D8">{formatDateTime(nextEv.date, nextEv.time)}</MetaRow>
+                <MetaRow icon="location-outline" color="#D8D8D8">{nextEv.location}</MetaRow>
+              </View>
+              <View style={{ flexDirection: 'row', gap: 10, marginTop: 6 }}>
+                <WBtn
+                  label="View Ticket" icon="qr-code-outline" size="sm"
+                  onPress={() => router.push({ pathname: '/booking/ticket', params: { bookingId: nextBooking.id, eventId: nextBooking.event_id } })}
+                />
+                <WGhostBtn
+                  label="Event details" size="sm"
+                  onPress={() => router.push(`/event/${nextBooking.event_id}`)}
+                />
+              </View>
+            </View>
+          </View>
+        ) : null}
+
+        <View style={desktopStyles.sectionHeader}>
+          <Text style={desktopStyles.sectionTitle}>Upcoming events</Text>
+          <Text style={desktopStyles.sectionLink} onPress={() => router.push('/(tabs)/book')}>See all</Text>
+        </View>
+        <View style={desktopStyles.grid}>
+          {events.slice(0, 6).map((event) => (
+            <View key={event.id} style={desktopStyles.gridItem}>
+              <WEventCard event={event} onPress={() => router.push(`/event/${event.id}`)} />
+            </View>
+          ))}
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -154,7 +225,12 @@ export default function HomeScreen() {
                   </View>
                 ) : null}
               </View>
-              <Text style={styles.viewDetails}>View Details</Text>
+              <TouchableOpacity
+                onPress={() => router.push({ pathname: '/booking/ticket', params: { bookingId: booking.id, eventId: booking.event_id } })}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.viewDetails}>View Ticket →</Text>
+              </TouchableOpacity>
             </TouchableOpacity>
           );
         })
@@ -169,7 +245,7 @@ export default function HomeScreen() {
         >
           <View style={welcomeStyles.handle} />
           <Text style={welcomeStyles.emoji}>🎉</Text>
-          <Text style={welcomeStyles.title}>Welcome to Fieldd{profile?.name ? `, ${profile.name.split(' ')[0]}` : ''}!</Text>
+          <Text style={welcomeStyles.title}>Welcome to fitXball{profile?.name ? `, ${profile.name.split(' ')[0]}` : ''}!</Text>
           <Text style={welcomeStyles.body}>
             You're all set. Browse upcoming events in Nairobi, book your spot, and start playing.
           </Text>
@@ -181,6 +257,30 @@ export default function HomeScreen() {
     </View>
   );
 }
+
+const desktopStyles = StyleSheet.create({
+  hero: {
+    position: 'relative', borderRadius: 20, overflow: 'hidden',
+    borderWidth: 1, borderColor: FW.border, minHeight: 240,
+    backgroundColor: FW.surface, justifyContent: 'flex-end',
+  },
+  heroOverlay: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.62)',
+  },
+  heroContent: {
+    paddingVertical: 28, paddingHorizontal: 32, gap: 14, maxWidth: 520,
+  },
+  heroTitle: { fontSize: 30, fontWeight: '800', color: FW.text, letterSpacing: -0.6 },
+  sectionHeader: {
+    flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between',
+    marginTop: 36, marginBottom: 18,
+  },
+  sectionTitle: { fontSize: 21, fontWeight: '800', color: FW.text, letterSpacing: -0.4 },
+  sectionLink: { fontSize: 14, fontWeight: '600', color: FW.primary },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 16 },
+  gridItem: { width: '31.8%', minWidth: 260, flexGrow: 1, maxWidth: '32.5%' },
+});
 
 const welcomeStyles = StyleSheet.create({
   backdrop: {

@@ -7,12 +7,16 @@ import {
   StyleSheet,
   ActivityIndicator,
   Alert,
+  useWindowDimensions,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '@/constants/colors';
 import { supabase, type Event } from '@/lib/supabase';
+import { formatDateTime } from '@/lib/events';
+import { FW, WBtn, WGhostBtn, WTag, StatBlock, PageTitle, useIsDesktopWeb } from '@/components/web/kit';
+import { WebShell } from '@/components/web/WebShell';
 
 export default function AdminHomeScreen() {
   const router = useRouter();
@@ -55,6 +59,147 @@ export default function AdminHomeScreen() {
           },
         },
       ]
+    );
+  }
+
+  const isDesktop = useIsDesktopWeb();
+  // Below 1280px the fixed columns starve the flexible Event column — drop Venue
+  const showVenue = useWindowDimensions().width >= 1280;
+
+  if (isDesktop) {
+    const totalBooked = events.reduce((sum, e) => sum + e.slots_booked, 0);
+    const totalSlots = events.reduce((sum, e) => sum + e.slots_available, 0);
+    const fillRate = totalSlots > 0 ? Math.round((totalBooked / totalSlots) * 100) : 0;
+    const creditsCollected = events.reduce((sum, e) => sum + e.slots_booked * e.cost_in_credits, 0);
+
+    const webDelete = async (event: Event) => {
+      if (typeof window !== 'undefined' && window.confirm(`Delete "${event.title}"? This cannot be undone.`)) {
+        const { error } = await supabase.from('events').delete().eq('id', event.id);
+        if (!error) setEvents((prev) => prev.filter((e) => e.id !== event.id));
+      }
+    };
+
+    return (
+      <WebShell admin maxWidth={1180}>
+        <PageTitle
+          kicker="Admin"
+          title="Overview"
+          right={[
+            <WGhostBtn key="scan" label="Scan Entry" icon="qr-code-outline" onPress={() => {
+              // Scanner needs an event to validate against — use the next upcoming one
+              const target = events[0];
+              if (!target) {
+                if (typeof window !== 'undefined') window.alert('No events yet — add an event before scanning entries.');
+                return;
+              }
+              router.push({
+                pathname: '/admin/scanner',
+                params: { eventId: target.id, eventTitle: target.title, eventDate: formatDateTime(target.date, target.time), total: String(target.slots_available) },
+              });
+            }} />,
+            <WBtn key="add" label="Add Event" icon="add" onPress={() => router.push('/admin/add-event')} />,
+          ]}
+        />
+        <View style={{ flexDirection: 'row', gap: 14, marginTop: 24, marginBottom: 28 }}>
+          <StatBlock label="Events" value={events.length} />
+          <StatBlock label="Bookings" value={totalBooked} />
+          <StatBlock label="Fill rate" value={`${fillRate}%`} />
+          <StatBlock label="Credits collected" value={creditsCollected.toLocaleString()} suffix="cr" />
+        </View>
+        {loading ? (
+          <View style={{ paddingTop: 60, alignItems: 'center' }}>
+            <ActivityIndicator color={FW.primary} />
+          </View>
+        ) : events.length === 0 ? (
+          <View style={{
+            backgroundColor: FW.surface, borderWidth: 1, borderColor: FW.border,
+            borderRadius: 18, paddingVertical: 48, alignItems: 'center',
+          }}>
+            <Text style={{ color: FW.muted, fontSize: 14 }}>No events yet. Add your first event.</Text>
+          </View>
+        ) : (
+          <View style={{
+            backgroundColor: FW.surface, borderWidth: 1, borderColor: FW.border,
+            borderRadius: 18, overflow: 'hidden',
+          }}>
+            {/* Table header */}
+            <View style={{
+              flexDirection: 'row', alignItems: 'center',
+              paddingVertical: 14, paddingHorizontal: 18,
+              borderBottomWidth: 1, borderBottomColor: FW.border, backgroundColor: FW.panel,
+            }}>
+              {([
+                ['Event', undefined],
+                ['Sport', 110],
+                ['When', 170],
+                ...(showVenue ? [['Venue', 150] as const] : []),
+                ['Booked', 130],
+                ['Actions', 130],
+              ] as Array<readonly [string, number | undefined]>).map(([h, w]) => (
+                <Text key={h} style={{
+                  flex: w === undefined ? 1 : undefined,
+                  width: w,
+                  paddingHorizontal: 8,
+                  textAlign: h === 'Actions' ? 'right' : 'left',
+                  fontSize: 11.5, fontWeight: '700', letterSpacing: 0.7,
+                  textTransform: 'uppercase', color: FW.muted,
+                }}>{h}</Text>
+              ))}
+            </View>
+            {events.map((item, idx) => {
+              const full = item.slots_booked >= item.slots_available;
+              const pct = item.slots_available > 0 ? Math.round((item.slots_booked / item.slots_available) * 100) : 0;
+              return (
+                <View key={item.id} style={{
+                  flexDirection: 'row', alignItems: 'center',
+                  paddingVertical: 15, paddingHorizontal: 18,
+                  borderBottomWidth: idx === events.length - 1 ? 0 : 1, borderBottomColor: FW.borderSoft,
+                }}>
+                  <Text style={{ flex: 1, paddingHorizontal: 8, fontSize: 14, fontWeight: '700', color: FW.text }} numberOfLines={1}>
+                    {item.title}
+                  </Text>
+                  <View style={{ width: 110, paddingHorizontal: 8 }}>
+                    <WTag label={item.sport} tone="soft" />
+                  </View>
+                  <Text style={{ width: 170, paddingHorizontal: 8, color: FW.sec, fontSize: 13.5 }} numberOfLines={1}>
+                    {formatDateTime(item.date, item.time)}
+                  </Text>
+                  {showVenue && (
+                    <Text style={{ width: 150, paddingHorizontal: 8, color: FW.sec, fontSize: 13.5 }} numberOfLines={1}>
+                      {item.location}
+                    </Text>
+                  )}
+                  <View style={{ width: 130, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                    <View style={{ flex: 1, maxWidth: 80, height: 5, borderRadius: 3, backgroundColor: FW.surfaceEl, overflow: 'hidden' }}>
+                      <View style={{ width: `${pct}%`, height: '100%', backgroundColor: full ? FW.error : FW.primary }} />
+                    </View>
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: full ? FW.error : FW.sec, fontFamily: FW.mono }}>
+                      {item.slots_booked}/{item.slots_available}
+                    </Text>
+                  </View>
+                  <View style={{ width: 130, paddingHorizontal: 8, flexDirection: 'row', gap: 8, justifyContent: 'flex-end' }}>
+                    {([
+                      ['pencil-outline', () => router.push(`/admin/edit-event/${item.id}`), FW.sec],
+                      ['qr-code-outline', () => router.push({
+                        pathname: '/admin/scanner',
+                        params: { eventId: item.id, eventTitle: item.title, eventDate: formatDateTime(item.date, item.time), total: String(item.slots_available) },
+                      }), FW.sec],
+                      ['trash-outline', () => webDelete(item), FW.error],
+                    ] as Array<[any, () => void, string]>).map(([icon, onPress, color], i) => (
+                      <TouchableOpacity key={i} style={{
+                        width: 32, height: 32, borderRadius: 9, backgroundColor: FW.surfaceEl,
+                        alignItems: 'center', justifyContent: 'center',
+                      }} onPress={onPress}>
+                        <Ionicons name={icon} size={15} color={color} />
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        )}
+      </WebShell>
     );
   }
 

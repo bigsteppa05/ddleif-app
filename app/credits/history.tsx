@@ -10,8 +10,16 @@ import {
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { supabase, getUserBookingHistory, type BookingWithEvent } from '@/lib/supabase';
+import {
+  supabase,
+  getUserBookingHistory,
+  getUserPayments,
+  type BookingWithEvent,
+  type Payment,
+} from '@/lib/supabase';
 import { Colors } from '@/constants/colors';
+import { FW, WTag, PageTitle, useIsDesktopWeb } from '@/components/web/kit';
+import { WebShell } from '@/components/web/WebShell';
 
 function sportIcon(sport: string): React.ComponentProps<typeof Ionicons>['name'] {
   const s = (sport ?? '').toLowerCase();
@@ -23,22 +31,152 @@ function sportIcon(sport: string): React.ComponentProps<typeof Ionicons>['name']
   return 'medal-outline';
 }
 
+type LedgerItem =
+  | { kind: 'booking'; date: string; booking: BookingWithEvent }
+  | { kind: 'topup'; date: string; payment: Payment };
+
+function formatLedgerDate(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-GB', {
+    day: 'numeric', month: 'short', year: 'numeric',
+  });
+}
+
 export default function TransactionHistoryScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [bookings, setBookings] = useState<BookingWithEvent[]>([]);
+  const [payments, setPayments] = useState<Payment[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function load() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { setLoading(false); return; }
-      const data = await getUserBookingHistory(user.id);
-      setBookings(data);
+      const [bookingData, paymentData] = await Promise.all([
+        getUserBookingHistory(user.id),
+        getUserPayments(user.id),
+      ]);
+      setBookings(bookingData);
+      setPayments(paymentData);
       setLoading(false);
     }
     load();
   }, []);
+
+  // Single ledger, newest first: bookings spend credits, top-ups add them
+  const ledger: LedgerItem[] = [
+    ...bookings.map((booking) => ({ kind: 'booking' as const, date: booking.created_at, booking })),
+    ...payments.map((payment) => ({
+      kind: 'topup' as const,
+      date: payment.completed_at ?? payment.created_at,
+      payment,
+    })),
+  ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+  const isDesktop = useIsDesktopWeb();
+
+  if (isDesktop) {
+    return (
+      <WebShell maxWidth={920}>
+        <TouchableOpacity
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 20 }}
+          onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)/profile'))}
+        >
+          <Ionicons name="arrow-back" size={16} color={FW.sec} />
+          <Text style={{ fontSize: 14, fontWeight: '600', color: FW.sec }}>Profile</Text>
+        </TouchableOpacity>
+        <PageTitle title="Transaction history" />
+        {loading ? (
+          <View style={{ paddingTop: 60, alignItems: 'center' }}>
+            <ActivityIndicator color={FW.primary} />
+          </View>
+        ) : ledger.length === 0 ? (
+          <View style={{
+            marginTop: 24, backgroundColor: FW.surface, borderWidth: 1, borderColor: FW.border,
+            borderRadius: 18, paddingVertical: 48, alignItems: 'center', gap: 10,
+          }}>
+            <Ionicons name="receipt-outline" size={36} color={FW.muted} />
+            <Text style={{ color: FW.muted, fontSize: 14 }}>No transactions yet</Text>
+          </View>
+        ) : (
+          <View style={{
+            marginTop: 24, backgroundColor: FW.surface, borderWidth: 1, borderColor: FW.border,
+            borderRadius: 18, overflow: 'hidden',
+          }}>
+            {ledger.map((item, i) => {
+              const last = i === ledger.length - 1;
+              if (item.kind === 'topup') {
+                const { payment } = item;
+                return (
+                  <View key={payment.id} style={{
+                    flexDirection: 'row', alignItems: 'center', gap: 16,
+                    paddingVertical: 16, paddingHorizontal: 22,
+                    borderBottomWidth: last ? 0 : 1, borderBottomColor: FW.borderSoft,
+                  }}>
+                    <View style={{
+                      width: 42, height: 42, borderRadius: 12, flexShrink: 0,
+                      backgroundColor: 'rgba(200,255,0,0.1)', alignItems: 'center', justifyContent: 'center',
+                    }}>
+                      <Ionicons name="cash-outline" size={19} color={FW.primary} />
+                    </View>
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={{ fontSize: 14.5, fontWeight: '700', color: FW.text }} numberOfLines={1}>
+                        Top-up · M-Pesa
+                      </Text>
+                      <Text style={{ fontSize: 12.5, color: FW.muted, marginTop: 3 }}>
+                        {formatLedgerDate(item.date)}{payment.mpesa_receipt ? ` · ${payment.mpesa_receipt}` : ''}
+                      </Text>
+                    </View>
+                    <Text style={{
+                      fontSize: 15, fontWeight: '800', fontFamily: FW.mono,
+                      color: FW.primary, width: 90, textAlign: 'right',
+                    }}>
+                      +{payment.credits}
+                    </Text>
+                  </View>
+                );
+              }
+              const { booking } = item;
+              const ev = booking.events;
+              const isConfirmed = booking.status === 'confirmed' || booking.status === 'checked_in';
+              return (
+                <View key={booking.id} style={{
+                  flexDirection: 'row', alignItems: 'center', gap: 16,
+                  paddingVertical: 16, paddingHorizontal: 22,
+                  borderBottomWidth: last ? 0 : 1, borderBottomColor: FW.borderSoft,
+                }}>
+                  <View style={{
+                    width: 42, height: 42, borderRadius: 12, flexShrink: 0,
+                    backgroundColor: FW.surfaceEl, alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    <Ionicons name={sportIcon(ev?.sport ?? '')} size={19} color={FW.sec} />
+                  </View>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={{ fontSize: 14.5, fontWeight: '700', color: FW.text }} numberOfLines={1}>
+                      {ev?.title ?? 'Unknown Event'}
+                    </Text>
+                    <Text style={{ fontSize: 12.5, color: FW.muted, marginTop: 3 }}>
+                      Booked {formatLedgerDate(booking.created_at)} · {booking.booking_ref}
+                    </Text>
+                  </View>
+                  <WTag
+                    label={booking.status === 'checked_in' ? 'Checked in' : isConfirmed ? 'Confirmed' : 'Cancelled'}
+                    tone={isConfirmed ? 'limeSoft' : 'soft'}
+                  />
+                  <Text style={{
+                    fontSize: 15, fontWeight: '800', fontFamily: FW.mono,
+                    color: FW.text, width: 90, textAlign: 'right',
+                  }}>
+                    −{ev?.cost_in_credits ?? 0}
+                  </Text>
+                </View>
+              );
+            })}
+          </View>
+        )}
+      </WebShell>
+    );
+  }
 
   return (
     <View style={{ flex: 1, backgroundColor: Colors.background }}>
@@ -75,7 +213,7 @@ export default function TransactionHistoryScreen() {
               month: 'short',
               year: 'numeric',
             });
-            const isConfirmed = booking.status === 'confirmed';
+            const isConfirmed = booking.status === 'confirmed' || booking.status === 'checked_in';
             return (
               <View key={booking.id} style={styles.bookingCard}>
                 <View style={styles.bookingLeft}>
@@ -109,9 +247,34 @@ export default function TransactionHistoryScreen() {
 
         {/* Purchases section */}
         <Text style={[styles.sectionLabel, { marginTop: 24 }]}>Purchases</Text>
-        <View style={styles.comingSoonCard}>
-          <Text style={styles.comingSoonText}>Purchase history coming soon</Text>
-        </View>
+        {loading ? (
+          <View style={styles.loadingBox}>
+            <ActivityIndicator color={Colors.primary} />
+          </View>
+        ) : payments.length === 0 ? (
+          <View style={styles.emptyCard}>
+            <Ionicons name="cash-outline" size={36} color={Colors.textMuted} />
+            <Text style={styles.emptyText}>No top-ups yet</Text>
+          </View>
+        ) : (
+          payments.map((payment) => (
+            <View key={payment.id} style={styles.bookingCard}>
+              <View style={styles.bookingLeft}>
+                <Ionicons name="cash-outline" size={22} color={Colors.primary} style={styles.sportIcon} />
+                <View style={styles.bookingInfo}>
+                  <Text style={styles.bookingTitle} numberOfLines={1}>Top-up · M-Pesa</Text>
+                  <Text style={styles.bookingDate}>
+                    {formatLedgerDate(payment.completed_at ?? payment.created_at)}
+                    {payment.mpesa_receipt ? ` · ${payment.mpesa_receipt}` : ''}
+                  </Text>
+                </View>
+              </View>
+              <View style={styles.bookingRight}>
+                <Text style={styles.topupAmount}>+{payment.credits} Credits</Text>
+              </View>
+            </View>
+          ))
+        )}
       </ScrollView>
     </View>
   );
@@ -190,6 +353,11 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
   },
+  topupAmount: {
+    color: Colors.primary,
+    fontSize: 14,
+    fontWeight: '700',
+  },
   statusBadge: {
     borderRadius: 8,
     paddingHorizontal: 8,
@@ -200,11 +368,4 @@ const styles = StyleSheet.create({
   statusText: { fontSize: 11, fontWeight: '600' },
   statusTextConfirmed: { color: Colors.primary },
   statusTextCancelled: { color: Colors.textMuted },
-  comingSoonCard: {
-    backgroundColor: Colors.surface,
-    borderRadius: 14,
-    padding: 24,
-    alignItems: 'center',
-  },
-  comingSoonText: { color: Colors.textMuted, fontSize: 14 },
 });

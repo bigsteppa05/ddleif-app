@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import {
   View,
   Text,
@@ -17,10 +17,20 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase, uploadEventImage } from '@/lib/supabase';
+
+function uuid4(): string {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
 import { Dropdown } from '@/components/Dropdown';
 import { DatePicker } from '@/components/DatePicker';
 import { TimePicker } from '@/components/TimePicker';
+import { WebSelect, WebDate, WebTime } from '@/components/web/WebControls';
 import { Colors } from '@/constants/colors';
+import { notify } from '@/lib/ui';
 import { SPORTS, DURATION_OPTIONS } from '@/lib/options';
 
 const now = new Date();
@@ -77,18 +87,26 @@ export default function AddEventScreen() {
 
   async function handleSave() {
     if (!form.title.trim() || !form.sport || !form.date) {
-      Alert.alert('Missing Fields', 'Title, sport, and date are required.');
+      notify('Missing Fields', 'Title, sport, and date are required.');
       return;
     }
     setLoading(true);
 
+    // Generate the id client-side so the image can be foldered under it
+    const eventId = uuid4();
     let finalImageUrl = form.image_url || null;
     if (form.imageUri) {
-      const uploaded = await uploadEventImage(form.imageUri);
-      if (uploaded) finalImageUrl = uploaded;
+      try {
+        finalImageUrl = await uploadEventImage(form.imageUri, eventId);
+      } catch (e) {
+        setLoading(false);
+        notify('Image upload failed', `${e instanceof Error ? e.message : e}\nThe event was not saved — please try again.`);
+        return;
+      }
     }
 
     const { error } = await supabase.from('events').insert({
+      id: eventId,
       title: form.title.trim(),
       sport: form.sport,
       description: form.description.trim(),
@@ -106,9 +124,10 @@ export default function AddEventScreen() {
     });
     setLoading(false);
     if (error) {
-      Alert.alert('Error', error.message);
+      notify('Error', error.message);
     } else {
-      Alert.alert('Success', 'Event created!', [{ text: 'OK', onPress: () => router.back() }]);
+      notify('Success', 'Event created!');
+      router.back();
     }
   }
 
@@ -160,15 +179,29 @@ export function EventForm({
   minDate?: string;
 }) {
   const displayImage = form.imageUri || form.image_url;
+  const isWeb = Platform.OS === 'web';
 
   async function pickImage() {
+    // Web: native file dialog — no picker module or permissions needed
+    if (Platform.OS === 'web') {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/jpeg,image/png,image/webp';
+      input.onchange = () => {
+        const file = input.files?.[0];
+        if (file) set('imageUri', URL.createObjectURL(file));
+      };
+      input.click();
+      return;
+    }
+    // Native: photo gallery via expo-image-picker
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const ImagePicker = require('expo-image-picker');
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
-        aspect: [16, 9],
+        aspect: [4, 3],
         quality: 0.85,
       });
       if (!result.canceled && result.assets[0]) {
@@ -204,14 +237,13 @@ export function EventForm({
       <View style={formStyles.card}>
         <Field label="Title *" value={form.title} onChangeText={(v) => set('title', v)} placeholder="Football Friday" padded />
         <View style={formStyles.divider} />
-        <Dropdown
-          label="Sport *"
-          value={form.sport}
-          options={SPORTS}
-          onChange={(v) => set('sport', v)}
-          placeholder="Select sport"
-          flat
-        />
+        {isWeb ? (
+          <LabeledRow label="Sport *">
+            <WebSelect value={form.sport} onChange={(v) => set('sport', v)} options={SPORTS} placeholder="Select sport" />
+          </LabeledRow>
+        ) : (
+          <Dropdown label="Sport *" value={form.sport} options={SPORTS} onChange={(v) => set('sport', v)} placeholder="Select sport" flat />
+        )}
         <View style={formStyles.divider} />
         <Field label="Mode" value={form.mode} onChangeText={(v) => set('mode', v)} placeholder="5-a-side, 3-on-3…" padded />
       </View>
@@ -219,30 +251,29 @@ export function EventForm({
       {/* Date & time */}
       <Text style={formStyles.sectionLabel}>When</Text>
       <View style={formStyles.card}>
-        <DatePicker
-          label="Date *"
-          value={form.date}
-          onChange={(v) => set('date', v)}
-          flat
-          years={EVENT_YEARS}
-          minDate={minDate}
-        />
+        {isWeb ? (
+          <LabeledRow label="Date *">
+            <WebDate value={form.date} onChange={(v) => set('date', v)} min={minDate} />
+          </LabeledRow>
+        ) : (
+          <DatePicker label="Date *" value={form.date} onChange={(v) => set('date', v)} flat years={EVENT_YEARS} minDate={minDate} />
+        )}
         <View style={formStyles.divider} />
-        <TimePicker
-          label="Time"
-          value={form.time}
-          onChange={(v) => set('time', v)}
-          flat
-        />
+        {isWeb ? (
+          <LabeledRow label="Time">
+            <WebTime value={form.time} onChange={(v) => set('time', v)} />
+          </LabeledRow>
+        ) : (
+          <TimePicker label="Time" value={form.time} onChange={(v) => set('time', v)} flat />
+        )}
         <View style={formStyles.divider} />
-        <Dropdown
-          label="Duration"
-          value={form.duration}
-          options={DURATION_OPTIONS}
-          onChange={(v) => set('duration', v)}
-          placeholder="Select duration"
-          flat
-        />
+        {isWeb ? (
+          <LabeledRow label="Duration">
+            <WebSelect value={form.duration} onChange={(v) => set('duration', v)} options={DURATION_OPTIONS} placeholder="Select duration" />
+          </LabeledRow>
+        ) : (
+          <Dropdown label="Duration" value={form.duration} options={DURATION_OPTIONS} onChange={(v) => set('duration', v)} placeholder="Select duration" flat />
+        )}
       </View>
 
       {/* Location */}
@@ -305,6 +336,15 @@ export function EventForm({
         )}
       </View>
 
+    </View>
+  );
+}
+
+function LabeledRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <View style={[formStyles.field, formStyles.fieldPadded]}>
+      <Text style={formStyles.label}>{label}</Text>
+      {children}
     </View>
   );
 }
@@ -373,6 +413,7 @@ const formStyles = StyleSheet.create({
     color: Colors.textPrimary,
     fontSize: 15,
     paddingVertical: 2,
+    ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as object) : null),
   },
   inputMultiline: {
     minHeight: 72,
@@ -395,7 +436,9 @@ const formStyles = StyleSheet.create({
     marginTop: 2,
   },
   imagePicker: {
-    height: 180,
+    aspectRatio: 4 / 3,
+    width: '100%',
+    maxHeight: 480,
     borderRadius: 14,
     overflow: 'hidden',
     backgroundColor: Colors.surface,

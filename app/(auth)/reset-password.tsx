@@ -16,6 +16,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import { Colors } from '@/constants/colors';
+import { AuthShell, AuthHeading, WBtn, FW, useIsDesktopWeb } from '@/components/web/kit';
+import { WField } from '@/components/web/WField';
 
 function ReqRow({ met, label }: { met: boolean; label: string }) {
   return (
@@ -33,12 +35,14 @@ function ReqRow({ met, label }: { met: boolean; label: string }) {
 export default function ResetPasswordScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const isDesktop = useIsDesktopWeb();
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [confirmVisible, setConfirmVisible] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [done, setDone] = useState(false);
 
   const pwReqs = {
     length: password.length >= 8,
@@ -58,10 +62,80 @@ export default function ResetPasswordScreen() {
     if (updateError) {
       setError(updateError.message);
     } else {
-      Alert.alert('Password reset', 'Your password has been updated.', [
-        { text: 'Sign in', onPress: () => router.replace('/(auth)/login') },
-      ]);
+      // updateUser within the recovery session leaves the user signed in —
+      // show success, then route to the app. Works on web (no Alert no-op).
+      setDone(true);
+      setTimeout(() => router.replace('/(tabs)'), 1600);
     }
+  }
+
+  if (done) {
+    return (
+      <View style={styles.successWrap}>
+        <View style={styles.successCircle}>
+          <Ionicons name="checkmark" size={40} color={Colors.background} />
+        </View>
+        <Text style={styles.title}>Password updated</Text>
+        <Text style={styles.desc}>You're all set — taking you to the app…</Text>
+        <TouchableOpacity style={styles.button} onPress={() => router.replace('/(tabs)')} activeOpacity={0.85}>
+          <Text style={styles.buttonText}>Continue</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  if (isDesktop) {
+    return (
+      <AuthShell>
+        <AuthHeading
+          title="Set a new password"
+          sub="Almost there. Choose a strong password you haven't used on fitXball before."
+        />
+        <View style={{ gap: 20 }}>
+          <View style={{ gap: 12 }}>
+            <WField
+              label="New password"
+              value={password}
+              onChangeText={(v) => { setPassword(v); setError(''); }}
+              secureTextEntry={!passwordVisible}
+              placeholder="Min 8 characters"
+              autoFocus
+              right={
+                <TouchableOpacity onPress={() => setPasswordVisible((p) => !p)}>
+                  <Ionicons name={passwordVisible ? 'eye-off-outline' : 'eye-outline'} size={19} color={FW.muted} />
+                </TouchableOpacity>
+              }
+            />
+            <View style={{ flexDirection: 'row', gap: 18, flexWrap: 'wrap' }}>
+              <ReqRow met={pwReqs.length} label="8+ characters" />
+              <ReqRow met={pwReqs.upper} label="One uppercase" />
+              <ReqRow met={pwReqs.number} label="One number" />
+            </View>
+          </View>
+          <WField
+            label="Confirm password"
+            value={confirm}
+            onChangeText={(v) => { setConfirm(v); setError(''); }}
+            secureTextEntry={!confirmVisible}
+            placeholder="Repeat password"
+            onSubmitEditing={handleReset}
+            error={error || undefined}
+            right={
+              <TouchableOpacity onPress={() => setConfirmVisible((p) => !p)}>
+                <Ionicons name={confirmVisible ? 'eye-off-outline' : 'eye-outline'} size={19} color={FW.muted} />
+              </TouchableOpacity>
+            }
+          />
+          {loading ? (
+            <View style={{ alignItems: 'center', paddingVertical: 16 }}>
+              <ActivityIndicator color={FW.primary} />
+            </View>
+          ) : (
+            <WBtn label="Update Password" size="lg" full onPress={handleReset} />
+          )}
+        </View>
+      </AuthShell>
+    );
   }
 
   return (
@@ -170,6 +244,17 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: Colors.border,
     alignItems: 'center', justifyContent: 'center',
     marginBottom: 20,
+  },
+  successWrap: {
+    flex: 1, backgroundColor: Colors.background,
+    alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 32, gap: 14,
+  },
+  successCircle: {
+    width: 88, height: 88, borderRadius: 44,
+    backgroundColor: Colors.primary,
+    alignItems: 'center', justifyContent: 'center',
+    marginBottom: 8,
   },
   title: { color: Colors.textPrimary, fontSize: 26, fontWeight: '800', letterSpacing: -0.3, marginBottom: 10 },
   desc: { color: Colors.textSecondary, fontSize: 15, lineHeight: 22, marginBottom: 28 },

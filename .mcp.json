@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "supabase": {
+      "type": "http",
+      "url": "https://mcp.supabase.com/mcp?project_ref=jnjpivplulsfystxinvd"
+    },
+    "chrome-devtools": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["/Users/habib/Downloads/chrome-devtools-mcp/build/src/bin/chrome-devtools-mcp.js"]
+    }
+  }
+}

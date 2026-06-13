@@ -9,13 +9,12 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-  FlatList,
-  Dimensions,
   Image,
   Alert,
   Animated,
   TouchableWithoutFeedback,
   Keyboard,
+  useWindowDimensions,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -23,18 +22,26 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import * as SecureStore from 'expo-secure-store';
 import { createClient } from '@supabase/supabase-js';
-import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY } from '@/lib/supabase';
+import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY, uploadAvatar } from '@/lib/supabase';
+import { OtpInput } from '@/components/OtpInput';
 import { Colors } from '@/constants/colors';
+import { notify } from '@/lib/ui';
+import { AuthShell, AuthHeading, LimeLink, WBtn, FW, useIsDesktopWeb } from '@/components/web/kit';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const TOTAL_STEPS = 4;
 
 export default function RegisterScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const listRef = useRef<FlatList>(null);
-
+  const isDesktop = useIsDesktopWeb();
   const [step, setStep] = useState(0);
+
+  // Sign out any existing session when entering registration
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) supabase.auth.signOut();
+    });
+  }, []);
 
   // Form values
   const [email, setEmail] = useState('');
@@ -43,11 +50,13 @@ export default function RegisterScreen() {
   const [name, setName] = useState('');
   const [username, setUsername] = useState('');
   const [avatarUri, setAvatarUri] = useState('');
-  const [otpDigits, setOtpDigits] = useState<string[]>(Array(6).fill(''));
+  const [smsConsent, setSmsConsent] = useState(false);
+  const [otpCode, setOtpCode] = useState('');
   const [otpError, setOtpError] = useState('');
   const [otpVerified, setOtpVerified] = useState(false);
   const [otpCountdown, setOtpCountdown] = useState(27);
   const [otpCanResend, setOtpCanResend] = useState(false);
+  const OTP_LENGTH = 8;
 
   // Field errors
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -86,15 +95,18 @@ export default function RegisterScreen() {
   const pwValid = pwReqs.length && pwReqs.upper && pwReqs.number;
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 
-  const phoneValid = phone.replace(/\D/g, '').length >= 9;
-  const step0Valid = emailValid && phoneValid && pwValid && !emailTaken;
-  const step1Valid = otpVerified; // OTP step
+  // Kenyan mobile: 9 digits starting 7 or 1, tolerating a typed leading 0
+  const phoneDigits = phone.replace(/\D/g, '').replace(/^0/, '');
+  const phoneValid = /^[17]\d{8}$/.test(phoneDigits);
+  const step0Valid = emailValid && !emailTaken && pwValid;
+  const step1Valid = otpVerified;
   const step2Valid =
     name.trim().length > 0 &&
     username.length >= 3 &&
     /^[a-z0-9_]+$/.test(username) &&
     usernameAvailable === true &&
-    !usernameChecking;
+    !usernameChecking &&
+    phoneValid;
   const currentStepValid =
     step === 0 ? step0Valid :
     step === 1 ? step1Valid :
@@ -190,13 +202,12 @@ export default function RegisterScreen() {
 
   // ── Navigation ────────────────────────────────────────────────────────────
   function scrollTo(index: number) {
-    listRef.current?.scrollToIndex({ index, animated: true });
     setStep(index);
   }
 
   function goBack() {
     if (step > 0) { scrollTo(step - 1); return; }
-    router.back(); // returns to Welcome screen
+    router.replace('/(auth)/welcome');
   }
 
   async function handleNext() {
@@ -217,15 +228,15 @@ export default function RegisterScreen() {
       return;
     }
     if (step === 0) {
-      // Try to send OTP to phone (requires Twilio in Supabase)
-      const fullPhone = `+254${phone.replace(/\D/g, '')}`;
-      try {
-        await supabase.auth.signInWithOtp({ phone: fullPhone });
-      } catch {
-        // OTP sending failed silently — user can still proceed after countdown
+      const { error: otpSendError } = await supabase.auth.signInWithOtp({
+        email: email.trim().toLowerCase(),
+      });
+      if (otpSendError) {
+        setLoading(false);
+        setToastMsg(otpSendError.message);
+        return;
       }
-      // Start OTP countdown
-      setOtpCountdown(27);
+      setOtpCountdown(60);
       setOtpCanResend(false);
       const timer = setInterval(() => {
         setOtpCountdown((c) => {
@@ -244,84 +255,28 @@ export default function RegisterScreen() {
   // ── Submit ────────────────────────────────────────────────────────────────
   async function handleFinish() {
     setLoading(true);
-    const trimmedEmail = email.trim().toLowerCase();
 
-    const reg = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
-    });
-
-    const { data, error: signUpError } = await reg.auth.signUp({
-      email: trimmedEmail,
-      password,
-      options: { data: { name: name.trim() } },
-    });
-
-    // Supabase email-enumeration-protection returns user: null with no error
-    // when the email is already taken. Treat that as "email taken".
-    if (!data.user && !signUpError) {
+    // User is already signed in via email OTP at step 1
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
       setLoading(false);
-      setEmailTaken(true);
-      setFieldError('email', 'This email is already registered.');
-      scrollTo(0);
-      shake();
+      setToastMsg('Session expired. Please start again.');
+      setTimeout(() => router.replace('/(auth)/register'), 2000);
       return;
     }
 
-    if (signUpError || !data.user) {
-      setLoading(false);
-      const msg = signUpError?.message?.toLowerCase() ?? '';
-      if (msg.includes('already registered') || msg.includes('already been registered')) {
-        setEmailTaken(true);
-        setFieldError('email', 'This email is already registered.');
-        scrollTo(0);
-        shake();
-      } else if (msg.includes('password')) {
-        setFieldError('password', "Password doesn't meet requirements.");
-        scrollTo(0);
-        shake();
-      } else {
-        // Show the real error so we can diagnose unexpected failures
-        setToastMsg(signUpError?.message ?? 'Something went wrong. Please try again.');
-      }
-      return;
-    }
-
-    const userId = data.user.id;
-
-    // If email confirmation is required, sign in to get a session for RLS
-    if (!data.session) {
-      const { error: signInErr } = await reg.auth.signInWithPassword({ email: trimmedEmail, password });
-      if (signInErr) {
-        setLoading(false);
-        Alert.alert(
-          'Confirm your email',
-          'Check your inbox and confirm your address, then sign in.',
-          [{ text: 'Sign In', onPress: () => router.replace('/(auth)/login') }]
-        );
-        return;
-      }
-    }
+    const userId = user.id;
+    const trimmedEmail = user.email ?? email.trim().toLowerCase();
 
     // Upload avatar — non-fatal
     let avatarUrl: string | null = null;
     if (avatarUri) {
       try {
-        const ext = (avatarUri.split('?')[0].split('.').pop()?.toLowerCase() ?? 'jpg')
-          .replace('heic', 'jpg')
-          .replace('heif', 'jpg');
-        const path = `${userId}.${ext}`;
-        const blob = await (await fetch(avatarUri)).blob();
-        const { error: upErr } = await reg.storage
-          .from('avatars')
-          .upload(path, blob, { contentType: `image/${ext === 'jpg' ? 'jpeg' : ext}`, upsert: true });
-        if (!upErr) {
-          avatarUrl = reg.storage.from('avatars').getPublicUrl(path).data.publicUrl;
-        }
+        avatarUrl = await uploadAvatar(userId, avatarUri);
       } catch { /* non-fatal */ }
     }
 
-    // Single upsert with all fields + credits: 0
-    await reg.from('profiles').upsert(
+    await supabase.from('profiles').upsert(
       {
         id: userId,
         email: trimmedEmail,
@@ -334,29 +289,27 @@ export default function RegisterScreen() {
       { onConflict: 'id' }
     );
 
-    await reg.auth.signOut();
-
-    // Flag for welcome sheet on home screen
-    await SecureStore.setItemAsync('onboarding_needed', 'true');
-
-    // Auto sign-in with main client
-    const { error: mainErr } = await supabase.auth.signInWithPassword({
-      email: trimmedEmail,
-      password,
-    });
+    if (Platform.OS !== 'web') {
+      await SecureStore.setItemAsync('onboarding_needed', 'true');
+    }
 
     setLoading(false);
-
-    if (mainErr) {
-      setToastMsg('Account created! Please sign in.');
-      setTimeout(() => router.replace('/(auth)/login'), 2000);
-    } else {
-      router.replace('/(tabs)');
-    }
+    router.replace('/(tabs)');
   }
 
   // ── Photo picker ──────────────────────────────────────────────────────────
   async function pickPhoto() {
+    if (Platform.OS === 'web') {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/jpeg,image/png,image/webp';
+      input.onchange = () => {
+        const file = input.files?.[0];
+        if (file) setAvatarUri(URL.createObjectURL(file));
+      };
+      input.click();
+      return;
+    }
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const ImagePicker = require('expo-image-picker');
@@ -368,7 +321,7 @@ export default function RegisterScreen() {
       });
       if (!result.canceled && result.assets[0]) setAvatarUri(result.assets[0].uri);
     } catch {
-      Alert.alert('Not available', 'Image picker requires a native build. Run npx expo run:ios to enable it.');
+      notify('Not available', 'Image picker requires a native build.');
     }
   }
 
@@ -383,97 +336,71 @@ export default function RegisterScreen() {
     <StepCredentials
       key="creds"
       email={email}
-      phone={phone}
       password={password}
+      pwReqs={pwReqs}
       errors={errors}
       emailTaken={emailTaken}
-      pwReqs={pwReqs}
-      pwTouched={pwTouched}
-      passwordVisible={passwordVisible}
       emailRef={emailRef}
-      phoneRef={phoneRef}
-      passwordRef={passwordRef}
       onChangeEmail={(v) => {
         clearError('email');
         setEmailTaken(false);
-        setEmail(v.toLowerCase());
-      }}
-      onChangePhone={(v) => {
-        clearError('phone');
-        setPhone(v.replace(/\D/g, ''));
-      }}
-      onChangePassword={(v) => {
-        clearError('password');
-        setPwTouched(true);
-        setPassword(v);
+        setEmail(v);
       }}
       onBlurEmail={onBlurEmail}
+      onChangePassword={(v) => { clearError('password'); setPassword(v); }}
       onBlurPassword={onBlurPassword}
-      onTogglePassword={() => setPasswordVisible((p) => !p)}
-      onPasswordSubmit={handleNext}
       onSignIn={() => router.replace('/(auth)/login')}
     />,
     <StepOTP
       key="otp"
-      phone={phone}
-      digits={otpDigits}
+      code={otpCode}
+      otpLength={OTP_LENGTH}
       error={otpError}
       verified={otpVerified}
       countdown={otpCountdown}
       canResend={otpCanResend}
-      otpRefs={otpRefs}
-      onDigit={(value, index) => {
-        const char = value.slice(-1);
-        if (char && !/\d/.test(char)) return;
-        const next = [...otpDigits];
-        next[index] = char;
-        setOtpDigits(next);
+      onCode={async (val, isComplete) => {
+        setOtpCode(val);
         setOtpError('');
-        if (char && index < 5) {
-          otpRefs.current[index + 1]?.focus();
-        }
-      }}
-      onKeyPress={(key, index) => {
-        if (key === 'Backspace' && !otpDigits[index] && index > 0) {
-          const next = [...otpDigits];
-          next[index - 1] = '';
-          setOtpDigits(next);
-          otpRefs.current[index - 1]?.focus();
-        }
-      }}
-      onVerify={async () => {
-        const code = otpDigits.join('');
-        if (code.length < 6) return;
+        if (!isComplete) return;
         const { error: verifyError } = await supabase.auth.verifyOtp({
-          phone: `+254${phone.replace(/\D/g, '')}`,
-          token: code,
-          type: 'sms',
+          email: email.trim().toLowerCase(),
+          token: val,
+          type: 'email',
         });
         if (verifyError) {
           setOtpError("That code isn't right. Check and try again.");
         } else {
           setOtpError('');
           setOtpVerified(true);
+          // Persist the password collected in step 1 — enables password login
+          supabase.auth.updateUser({ password }).then(({ error: pwError }) => {
+            if (pwError) console.warn('Could not set password:', pwError.message);
+          });
+          // Auto-advance to the profile step once verified
+          setTimeout(() => setStep((s) => (s === 1 ? 2 : s)), 700);
         }
       }}
       onResend={async () => {
         if (!otpCanResend) return;
         setOtpCanResend(false);
-        setOtpCountdown(27);
+        setOtpCountdown(60);
         const timer = setInterval(() => {
           setOtpCountdown((c) => {
             if (c <= 1) { clearInterval(timer); setOtpCanResend(true); return 0; }
             return c - 1;
           });
         }, 1000);
-        await supabase.auth.signInWithOtp({ phone: `+254${phone.replace(/\D/g, '')}` });
+        const { error: resendError } = await supabase.auth.signInWithOtp({ email: email.trim().toLowerCase() });
+        if (resendError) setOtpError(resendError.message);
       }}
-      onSkip={() => { setOtpVerified(true); scrollTo(2); }}
+      onSkip={undefined}
     />,
     <StepProfile
       key="profile"
       name={name}
       username={username}
+      phone={phone}
       errors={errors}
       usernameChecking={usernameChecking}
       usernameAvailable={usernameAvailable}
@@ -485,6 +412,7 @@ export default function RegisterScreen() {
         clearError('username');
         setUsername(clean);
       }}
+      onChangePhone={(v) => setPhone(v.replace(/\D/g, ''))}
       onBlurName={onBlurName}
       onBlurUsername={onBlurUsername}
       onUsernameSubmit={handleNext}
@@ -497,6 +425,47 @@ export default function RegisterScreen() {
     />,
   ];
 
+  if (isDesktop) {
+    return (
+      <AuthShell
+        formWidth={440}
+        footer={
+          <Text style={{ fontSize: 13.5, color: FW.sec }}>
+            Already have an account? <LimeLink onPress={() => router.replace('/(auth)/login')}>Sign in</LimeLink>
+          </Text>
+        }
+      >
+        <AuthHeading
+          kicker={`Step ${step + 1} of ${TOTAL_STEPS}`}
+          title={stepTitle}
+          sub={step === 0 ? "You'll verify your email next, then set up your player profile." : undefined}
+        />
+        <View style={{ gap: 4 }}>
+          {stepComponents[step]}
+          {step !== 1 && (
+            loading ? (
+              <View style={{ alignItems: 'center', paddingVertical: 18, marginTop: 20 }}>
+                <ActivityIndicator color={FW.primary} />
+              </View>
+            ) : (
+              <WBtn
+                label={ctaLabel}
+                size="lg"
+                full
+                dim={!currentStepValid}
+                onPress={handleNext}
+                style={{ marginTop: 24 }}
+              />
+            )
+          )}
+        </View>
+        {!!toastMsg && (
+          <Text style={{ color: FW.error, fontSize: 13.5, marginTop: 18, textAlign: 'center' }}>{toastMsg}</Text>
+        )}
+      </AuthShell>
+    );
+  }
+
   return (
     <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
       <KeyboardAvoidingView
@@ -505,9 +474,7 @@ export default function RegisterScreen() {
       >
         {/* ── Header ── */}
         <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
-          <TouchableOpacity style={styles.backBtn} onPress={goBack} disabled={loading}>
-            <Ionicons name="arrow-back" size={20} color={Colors.textPrimary} />
-          </TouchableOpacity>
+          <View style={styles.backBtn} />
           <View style={styles.dotsRow}>
             {Array.from({ length: TOTAL_STEPS }).map((_, i) => (
               <View
@@ -527,27 +494,15 @@ export default function RegisterScreen() {
           <Text style={styles.stepTitle}>{stepTitle}</Text>
         </Animated.View>
 
-        {/* ── Sliding steps ── */}
-        <FlatList
-          ref={listRef}
-          data={stepComponents}
-          horizontal
-          pagingEnabled
-          scrollEnabled={false}
-          showsHorizontalScrollIndicator={false}
-          keyExtractor={(_, i) => String(i)}
-          getItemLayout={(_, i) => ({ length: SCREEN_WIDTH, offset: SCREEN_WIDTH * i, index: i })}
-          renderItem={({ item }) => (
-            <ScrollView
-              style={{ width: SCREEN_WIDTH }}
-              contentContainerStyle={styles.stepContent}
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}
-            >
-              {item}
-            </ScrollView>
-          )}
-        />
+        {/* ── Step content ── */}
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={styles.stepContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          {stepComponents[step]}
+        </ScrollView>
 
         {/* ── Footer ── */}
         <View style={[styles.footer, { paddingBottom: insets.bottom + 16 }]}>
@@ -607,34 +562,26 @@ export default function RegisterScreen() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function StepCredentials({
-  email, phone, password, errors, emailTaken, pwReqs, pwTouched, passwordVisible,
-  emailRef, phoneRef, passwordRef,
-  onChangeEmail, onChangePhone, onChangePassword, onBlurEmail, onBlurPassword,
-  onTogglePassword, onPasswordSubmit, onSignIn,
+  email, password, pwReqs, errors, emailTaken, emailRef,
+  onChangeEmail, onBlurEmail, onChangePassword, onBlurPassword, onSignIn,
 }: {
   email: string;
-  phone: string;
   password: string;
+  pwReqs: { length: boolean; upper: boolean; number: boolean };
   errors: Record<string, string>;
   emailTaken: boolean;
-  pwReqs: { length: boolean; upper: boolean; number: boolean };
-  pwTouched: boolean;
-  passwordVisible: boolean;
   emailRef: React.RefObject<TextInput | null>;
-  phoneRef: React.RefObject<TextInput | null>;
-  passwordRef: React.RefObject<TextInput | null>;
   onChangeEmail: (v: string) => void;
-  onChangePhone: (v: string) => void;
-  onChangePassword: (v: string) => void;
   onBlurEmail: () => void;
+  onChangePassword: (v: string) => void;
   onBlurPassword: () => void;
-  onTogglePassword: () => void;
-  onPasswordSubmit: () => void;
   onSignIn: () => void;
 }) {
   return (
     <View style={fieldStyles.group}>
-      {/* Email */}
+      <Text style={fieldStyles.otpDesc}>
+        Create your account with an email and password. We'll send a code to verify your email next.
+      </Text>
       <View style={fieldStyles.fieldBlock}>
         <Text style={fieldStyles.label}>Email</Text>
         <TextInput
@@ -649,7 +596,7 @@ function StepCredentials({
           autoCapitalize="none"
           autoCorrect={false}
           returnKeyType="next"
-          onSubmitEditing={() => phoneRef.current?.focus()}
+          autoFocus
         />
         {!!errors.email && (
           <View style={fieldStyles.errorRow}>
@@ -662,66 +609,40 @@ function StepCredentials({
           </View>
         )}
       </View>
-
-      {/* Phone */}
-      <View style={fieldStyles.fieldBlock}>
-        <Text style={fieldStyles.label}>Phone Number</Text>
-        <View style={[fieldStyles.phoneWrap, !!errors.phone && fieldStyles.inputWrapError]}>
-          <View style={fieldStyles.phonePrefixBox}>
-            <Text style={fieldStyles.phoneFlag}>🇰🇪</Text>
-            <Text style={fieldStyles.phonePrefixText}>+254</Text>
-            <Ionicons name="chevron-down" size={12} color={Colors.textMuted} />
-          </View>
-          <TextInput
-            ref={phoneRef}
-            style={fieldStyles.phoneInput}
-            value={phone}
-            onChangeText={onChangePhone}
-            placeholder="712 345 678"
-            placeholderTextColor={Colors.textMuted}
-            keyboardType="phone-pad"
-            returnKeyType="next"
-            onSubmitEditing={() => passwordRef.current?.focus()}
-          />
-        </View>
-        {!!errors.phone && <Text style={fieldStyles.errorText}>{errors.phone}</Text>}
-      </View>
-
-      {/* Password */}
       <View style={fieldStyles.fieldBlock}>
         <Text style={fieldStyles.label}>Password</Text>
-        <View style={[fieldStyles.inputWrap, !!errors.password && fieldStyles.inputWrapError]}>
-          <TextInput
-            ref={passwordRef}
-            style={fieldStyles.inputInner}
-            value={password}
-            onChangeText={onChangePassword}
-            onBlur={onBlurPassword}
-            placeholder="Min 8 characters"
-            placeholderTextColor={Colors.textMuted}
-            secureTextEntry={!passwordVisible}
-            autoCorrect={false}
-            returnKeyType="done"
-            onSubmitEditing={onPasswordSubmit}
-          />
-          <TouchableOpacity onPress={onTogglePassword} style={fieldStyles.eyeBtn} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
-            <Ionicons
-              name={passwordVisible ? 'eye-off-outline' : 'eye-outline'}
-              size={20}
-              color={Colors.textMuted}
-            />
-          </TouchableOpacity>
+        <TextInput
+          style={[fieldStyles.input, !!errors.password && fieldStyles.inputError]}
+          value={password}
+          onChangeText={onChangePassword}
+          onBlur={onBlurPassword}
+          placeholder="Create a password"
+          placeholderTextColor={Colors.textMuted}
+          secureTextEntry
+          autoCapitalize="none"
+          autoCorrect={false}
+          returnKeyType="done"
+        />
+        <View style={fieldStyles.reqRow}>
+          <PwReq ok={pwReqs.length} label="8+ characters" />
+          <PwReq ok={pwReqs.upper} label="Uppercase" />
+          <PwReq ok={pwReqs.number} label="Number" />
         </View>
         {!!errors.password && <Text style={fieldStyles.errorText}>{errors.password}</Text>}
-
-        {pwTouched && (
-          <View style={fieldStyles.reqList}>
-            <ReqRow met={pwReqs.length} label="At least 8 characters" />
-            <ReqRow met={pwReqs.upper} label="One uppercase letter" />
-            <ReqRow met={pwReqs.number} label="One number" />
-          </View>
-        )}
       </View>
+    </View>
+  );
+}
+
+function PwReq({ ok, label }: { ok: boolean; label: string }) {
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+      <Ionicons
+        name={ok ? 'checkmark-circle' : 'ellipse-outline'}
+        size={14}
+        color={ok ? Colors.primary : Colors.textMuted}
+      />
+      <Text style={{ fontSize: 12, color: ok ? Colors.primary : Colors.textMuted }}>{label}</Text>
     </View>
   );
 }
@@ -731,60 +652,36 @@ function StepCredentials({
 // ─────────────────────────────────────────────────────────────────────────────
 
 function StepOTP({
-  phone, digits, error, verified, countdown, canResend, otpRefs,
-  onDigit, onKeyPress, onVerify, onResend, onSkip,
+  code, otpLength, error, verified, countdown, canResend,
+  onCode, onResend,
 }: {
-  phone: string;
-  digits: string[];
+  code: string;
+  otpLength: number;
   error: string;
   verified: boolean;
   countdown: number;
   canResend: boolean;
-  otpRefs: React.MutableRefObject<(TextInput | null)[]>;
-  onDigit: (value: string, index: number) => void;
-  onKeyPress: (key: string, index: number) => void;
-  onVerify: () => void;
+  onCode: (val: string, isComplete: boolean) => void;
   onResend: () => void;
-  onSkip: () => void;
+  onSkip?: undefined;
 }) {
-  const displayPhone = `+254 ${phone.replace(/(\d{3})(\d{3})(\d{3})/, '$1 $2 $3')}`;
-  const code = digits.join('');
-
   return (
     <View style={{ gap: 24 }}>
       <Text style={fieldStyles.otpDesc}>
-        We sent a 6-digit code to{' '}
-        <Text style={{ color: Colors.textPrimary, fontWeight: '600' }}>{displayPhone}</Text>.
-        {'\n'}Enter it below to confirm it's you.
+        We sent a {otpLength}-digit code to your email.{'\n'}
+        Enter it below to confirm it's you.
       </Text>
 
-      {/* OTP boxes */}
-      <View style={{ flexDirection: 'row', gap: 9 }}>
-        {digits.map((d, i) => (
-          <View
-            key={i}
-            style={[
-              fieldStyles.otpBox,
-              error ? fieldStyles.otpBoxError : verified ? fieldStyles.otpBoxVerified : d ? fieldStyles.otpBoxFilled : undefined,
-            ]}
-          >
-            <TextInput
-              ref={(r) => { otpRefs.current[i] = r; }}
-              style={fieldStyles.otpInput}
-              value={d}
-              onChangeText={(v) => onDigit(v, i)}
-              onKeyPress={({ nativeEvent }) => onKeyPress(nativeEvent.key, i)}
-              keyboardType="number-pad"
-              maxLength={1}
-              textAlign="center"
-              caretHidden
-              editable={!verified}
-            />
-          </View>
-        ))}
-      </View>
+      <OtpInput
+        value={code}
+        length={otpLength}
+        onChange={(val) => onCode(val, false)}
+        onComplete={(val) => onCode(val, true)}
+        hasError={!!error}
+        verified={verified}
+        autoFocus
+      />
 
-      {/* Error */}
       {!!error && (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           <Ionicons name="alert-circle-outline" size={15} color={Colors.error} />
@@ -792,27 +689,13 @@ function StepOTP({
         </View>
       )}
 
-      {/* Verified pill */}
       {verified && (
         <View style={fieldStyles.verifiedPill}>
           <Ionicons name="checkmark-circle" size={18} color={Colors.primary} />
-          <Text style={{ color: Colors.primary, fontSize: 15, fontWeight: '700' }}>Number verified</Text>
+          <Text style={{ color: Colors.primary, fontSize: 15, fontWeight: '700' }}>Email verified</Text>
         </View>
       )}
 
-      {/* Verify button */}
-      {!verified && (
-        <TouchableOpacity
-          style={[fieldStyles.otpVerifyBtn, code.length < 6 && { opacity: 0.4 }]}
-          onPress={onVerify}
-          disabled={code.length < 6}
-          activeOpacity={0.85}
-        >
-          <Text style={fieldStyles.otpVerifyText}>Verify</Text>
-        </TouchableOpacity>
-      )}
-
-      {/* Resend */}
       {!verified && (
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <Text style={{ color: Colors.textSecondary, fontSize: 14 }}>Didn't get a code? </Text>
@@ -828,12 +711,6 @@ function StepOTP({
         </View>
       )}
 
-      {/* Skip (for dev / Twilio not configured) */}
-      <TouchableOpacity onPress={onSkip} style={{ alignSelf: 'center' }}>
-        <Text style={{ color: Colors.textMuted, fontSize: 13 }}>
-          {verified ? '' : 'Skip verification →'}
-        </Text>
-      </TouchableOpacity>
     </View>
   );
 }
@@ -856,12 +733,13 @@ function ReqRow({ met, label }: { met: boolean; label: string }) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function StepProfile({
-  name, username, errors, usernameChecking, usernameAvailable,
+  name, username, phone, errors, usernameChecking, usernameAvailable,
   nameRef, usernameRef,
-  onChangeName, onChangeUsername, onBlurName, onBlurUsername, onUsernameSubmit,
+  onChangeName, onChangeUsername, onChangePhone, onBlurName, onBlurUsername, onUsernameSubmit,
 }: {
   name: string;
   username: string;
+  phone: string;
   errors: Record<string, string>;
   usernameChecking: boolean;
   usernameAvailable: boolean | null;
@@ -869,6 +747,7 @@ function StepProfile({
   usernameRef: React.RefObject<TextInput | null>;
   onChangeName: (v: string) => void;
   onChangeUsername: (v: string) => void;
+  onChangePhone: (v: string) => void;
   onBlurName: () => void;
   onBlurUsername: () => void;
   onUsernameSubmit: () => void;
@@ -909,7 +788,7 @@ function StepProfile({
             placeholderTextColor={Colors.textMuted}
             autoCapitalize="none"
             autoCorrect={false}
-            returnKeyType="done"
+            returnKeyType="next"
             onSubmitEditing={onUsernameSubmit}
           />
           {usernameChecking && (
@@ -926,6 +805,26 @@ function StepProfile({
         {!errors.username && usernameAvailable === false && (
           <Text style={fieldStyles.errorText}>Username is already taken.</Text>
         )}
+      </View>
+
+      {/* Phone — required */}
+      <View style={fieldStyles.fieldBlock}>
+        <Text style={fieldStyles.label}>Phone Number</Text>
+        <View style={fieldStyles.phoneWrap}>
+          <View style={fieldStyles.phonePrefixBox}>
+            <Text style={fieldStyles.phoneFlag}>🇰🇪</Text>
+            <Text style={fieldStyles.phonePrefixText}>+254</Text>
+          </View>
+          <TextInput
+            style={fieldStyles.phoneInput}
+            value={phone}
+            onChangeText={onChangePhone}
+            placeholder="712 345 678"
+            placeholderTextColor={Colors.textMuted}
+            keyboardType="phone-pad"
+            returnKeyType="done"
+          />
+        </View>
       </View>
     </View>
   );
@@ -955,7 +854,12 @@ function StepPhoto({
         disabled={loading}
       >
         {avatarUri ? (
-          <Image source={{ uri: avatarUri }} style={photoStyles.image} />
+          <>
+            <Image source={{ uri: avatarUri }} style={photoStyles.image} />
+            <View style={photoStyles.editBadge}>
+              <Ionicons name="camera" size={14} color={Colors.background} />
+            </View>
+          </>
         ) : (
           <>
             <Ionicons name="camera-outline" size={40} color={Colors.textSecondary} />
@@ -964,16 +868,9 @@ function StepPhoto({
         )}
       </TouchableOpacity>
 
-      {avatarUri ? (
-        <TouchableOpacity onPress={onPick} disabled={loading} style={photoStyles.changeBtn}>
-          <Ionicons name="refresh-outline" size={14} color={Colors.primary} />
-          <Text style={photoStyles.changeText}>Change photo</Text>
-        </TouchableOpacity>
-      ) : (
-        <Text style={photoStyles.skipNote}>
-          Or tap <Text style={{ color: Colors.textPrimary, fontWeight: '600' }}>Skip</Text> below to continue without one.
-        </Text>
-      )}
+      <Text style={photoStyles.skipNote}>
+        {avatarUri ? 'Tap the photo to change it.' : 'Optional — you can add this later.'}
+      </Text>
     </View>
   );
 }
@@ -1114,6 +1011,7 @@ const fieldStyles = StyleSheet.create({
     fontSize: 16,
     paddingHorizontal: 16,
     paddingVertical: 14,
+    ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as object) : null),
   },
   inputError: { borderColor: Colors.error },
   inputWrap: {
@@ -1131,6 +1029,7 @@ const fieldStyles = StyleSheet.create({
     color: Colors.textPrimary,
     fontSize: 16,
     paddingVertical: 14,
+    ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as object) : null),
   },
   prefix: {
     color: Colors.textSecondary,
@@ -1260,6 +1159,13 @@ const photoStyles = StyleSheet.create({
     overflow: 'hidden',
   },
   image: { width: 120, height: 120, borderRadius: 60 },
+  editBadge: {
+    position: 'absolute', bottom: 4, right: 4,
+    width: 30, height: 30, borderRadius: 15,
+    backgroundColor: Colors.primary,
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 2, borderColor: Colors.background,
+  },
   addLabel: { color: Colors.textMuted, fontSize: 12, marginTop: 6 },
   changeBtn: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   changeText: { color: Colors.primary, fontSize: 14, fontWeight: '600' },

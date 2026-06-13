@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -19,11 +19,13 @@ import { supabase, getUserProfile, updateProfile, uploadAvatar, type Profile } f
 import { Dropdown } from '@/components/Dropdown';
 import { DatePicker } from '@/components/DatePicker';
 import { Colors } from '@/constants/colors';
+import { notify } from '@/lib/ui';
 import { GENDERS, COUNTRIES, VISIBILITY_OPTIONS } from '@/lib/options';
 
 type Form = {
   name: string;
   username: string;
+  phone: string;
   date_of_birth: string;
   gender: string;
   country: string;
@@ -34,11 +36,61 @@ type Form = {
   avatarUri: string;
 };
 
+// ── Web-native controls ──────────────────────────────────────────────────────
+// RN Modal-based pickers misbehave on web (stuck overlays, unscrollable option
+// lists). On web we render real DOM <select> / <input type="date"> instead —
+// native scrolling, native calendar popup, zero overlay state.
+
+const domControlStyle: Record<string, string | number> = {
+  width: '100%',
+  background: 'transparent',
+  border: 'none',
+  outline: 'none',
+  color: Colors.textPrimary,
+  fontSize: 15,
+  padding: '6px 0',
+  fontFamily: 'inherit',
+  colorScheme: 'dark', // dark-themed native calendar/select chrome
+  cursor: 'pointer',
+};
+
+function WebSelect({ value, onChange, options, placeholder }: {
+  value: string; onChange: (v: string) => void;
+  options: ReadonlyArray<{ label: string; value: string }>;
+  placeholder: string;
+}) {
+  return React.createElement(
+    'select',
+    {
+      value,
+      onChange: (e: { target: { value: string } }) => onChange(e.target.value),
+      style: { ...domControlStyle, color: value ? Colors.textPrimary : Colors.textMuted },
+    },
+    React.createElement('option', { value: '', disabled: true, hidden: true }, placeholder),
+    ...options.map((o) =>
+      React.createElement('option', { key: o.value, value: o.value, style: { color: '#111' } }, o.label)
+    ),
+  );
+}
+
+function WebDate({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return React.createElement('input', {
+    type: 'date',
+    value,
+    max: new Date().toISOString().slice(0, 10),
+    onChange: (e: { target: { value: string } }) => onChange(e.target.value),
+    style: { ...domControlStyle, color: value ? Colors.textPrimary : Colors.textMuted },
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 export default function EditProfileScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const isWeb = Platform.OS === 'web';
   const [form, setForm] = useState<Form>({
-    name: '', username: '', date_of_birth: '', gender: '', country: '',
+    name: '', username: '', phone: '', date_of_birth: '', gender: '', country: '',
     favourite_club: '', height: '', weight: '',
     visibility: 'public', avatarUri: '',
   });
@@ -60,6 +112,7 @@ export default function EditProfileScreen() {
         setForm({
           name: profile.name ?? '',
           username: profile.username ?? '',
+          phone: profile.phone ?? '',
           date_of_birth: profile.date_of_birth ?? '',
           gender: profile.gender ?? '',
           country: profile.country ?? '',
@@ -80,6 +133,17 @@ export default function EditProfileScreen() {
   }
 
   async function pickAvatar() {
+    if (isWeb) {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/jpeg,image/png,image/webp';
+      input.onchange = () => {
+        const file = input.files?.[0];
+        if (file) set('avatarUri', URL.createObjectURL(file));
+      };
+      input.click();
+      return;
+    }
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const ImagePicker = require('expo-image-picker');
@@ -93,13 +157,13 @@ export default function EditProfileScreen() {
         set('avatarUri', result.assets[0].uri);
       }
     } catch {
-      Alert.alert('Not available', 'Image picker requires a native build. Run npx expo run:ios to enable it.');
+      notify('Not available', 'Image picker requires a native build.');
     }
   }
 
   async function handleSave() {
     if (!form.name.trim()) {
-      Alert.alert('Name required', 'Please enter your full name.');
+      notify('Name required', 'Please enter your full name.');
       return;
     }
     setSaving(true);
@@ -107,6 +171,7 @@ export default function EditProfileScreen() {
       const data: Partial<Omit<Profile, 'id' | 'created_at' | 'is_admin'>> = {
         name: form.name.trim(),
         username: form.username.trim() || null,
+        phone: form.phone.trim() || null,
         date_of_birth: form.date_of_birth || null,
         gender: form.gender || null,
         country: form.country || null,
@@ -117,15 +182,18 @@ export default function EditProfileScreen() {
       };
 
       if (form.avatarUri) {
-        const url = await uploadAvatar(userId, form.avatarUri);
-        if (url) data.avatar_url = url;
+        data.avatar_url = await uploadAvatar(userId, form.avatarUri);
       }
 
       await updateProfile(userId, data);
-      Alert.alert('Saved', 'Profile updated.', [{ text: 'OK', onPress: () => router.back() }]);
+      notify('Saved', 'Profile updated.');
+      router.back();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to save. Please try again.';
-      Alert.alert('Error', msg);
+      let msg = err instanceof Error ? err.message : 'Failed to save. Please try again.';
+      if (msg.includes('duplicate key') && msg.includes('username')) {
+        msg = 'That username is already taken — pick another.';
+      }
+      notify('Error', msg);
     } finally {
       setSaving(false);
     }
@@ -145,7 +213,7 @@ export default function EditProfileScreen() {
         style={styles.container}
         contentContainerStyle={[
           styles.content,
-          { paddingTop: insets.top + 12, paddingBottom: insets.bottom + 40 },
+          { paddingTop: insets.top + 12, paddingBottom: insets.bottom + 60 },
         ]}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
@@ -155,7 +223,7 @@ export default function EditProfileScreen() {
           <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
             <Ionicons name="arrow-back" size={20} color={Colors.textPrimary} />
           </TouchableOpacity>
-          <Text style={styles.title}>Edit Profile</Text>
+          <Text style={styles.title}>Personal Info</Text>
           <View style={styles.headerSpacer} />
         </View>
 
@@ -185,61 +253,54 @@ export default function EditProfileScreen() {
             {/* ── Personal Info ── */}
             <Text style={styles.sectionLabel}>Personal Info</Text>
             <View style={styles.card}>
-              <Field
-                label="Full Name"
-                value={form.name}
-                onChangeText={(v) => set('name', v)}
-                placeholder="Alex Kamau"
-                autoCapitalize="words"
-                padded
-              />
+              <Field label="Full Name" value={form.name} onChangeText={(v) => set('name', v)}
+                placeholder="Alex Kamau" autoCapitalize="words" />
               <View style={styles.divider} />
-              <Field
-                label="Username"
-                value={form.username}
+              <Field label="Username" value={form.username}
                 onChangeText={(v) => set('username', v.replace(/\s/g, '').toLowerCase())}
-                placeholder="alexkamau"
-                autoCapitalize="none"
-                prefix="@"
-                padded
-              />
+                placeholder="alexkamau" autoCapitalize="none" prefix="@" />
               <View style={styles.divider} />
-              <Field
-                label="Email"
-                value={email}
-                onChangeText={() => {}}
-                disabled
-                padded
-              />
+              <Field label="Phone" value={form.phone} onChangeText={(v) => set('phone', v)}
+                placeholder="+254712345678" keyboardType="number-pad" />
+              <View style={styles.divider} />
+              <Field label="Email" value={email} onChangeText={() => {}} disabled />
             </View>
 
             {/* ── About You ── */}
             <Text style={styles.sectionLabel}>About You</Text>
             <View style={styles.card}>
-              <DatePicker
-                label="Date of Birth"
-                value={form.date_of_birth}
-                onChange={(v) => set('date_of_birth', v)}
-                flat
-              />
+              {isWeb ? (
+                <LabeledRow label="Date of Birth">
+                  <WebDate value={form.date_of_birth} onChange={(v) => set('date_of_birth', v)} />
+                </LabeledRow>
+              ) : (
+                <DatePicker
+                  label="Date of Birth"
+                  value={form.date_of_birth}
+                  onChange={(v) => set('date_of_birth', v)}
+                  flat
+                />
+              )}
               <View style={styles.divider} />
-              <Dropdown
-                label="Gender"
-                value={form.gender}
-                options={GENDERS}
-                onChange={(v) => set('gender', v)}
-                placeholder="Select gender"
-                flat
-              />
+              {isWeb ? (
+                <LabeledRow label="Gender">
+                  <WebSelect value={form.gender} onChange={(v) => set('gender', v)}
+                    options={GENDERS} placeholder="Select gender" />
+                </LabeledRow>
+              ) : (
+                <Dropdown label="Gender" value={form.gender} options={GENDERS}
+                  onChange={(v) => set('gender', v)} placeholder="Select gender" flat />
+              )}
               <View style={styles.divider} />
-              <Dropdown
-                label="Country"
-                value={form.country}
-                options={COUNTRIES}
-                onChange={(v) => set('country', v)}
-                placeholder="Select country"
-                flat
-              />
+              {isWeb ? (
+                <LabeledRow label="Country">
+                  <WebSelect value={form.country} onChange={(v) => set('country', v)}
+                    options={COUNTRIES} placeholder="Select country" />
+                </LabeledRow>
+              ) : (
+                <Dropdown label="Country" value={form.country} options={COUNTRIES}
+                  onChange={(v) => set('country', v)} placeholder="Select country" flat />
+              )}
             </View>
 
             {/* ── Physical ── */}
@@ -247,46 +308,33 @@ export default function EditProfileScreen() {
             <View style={styles.card}>
               <View style={styles.row}>
                 <View style={styles.half}>
-                  <Field
-                    label="Height"
-                    value={form.height}
-                    onChangeText={(v) => set('height', v)}
-                    placeholder="e.g. 178 cm"
-                    padded
-                  />
+                  <Field label="Height" value={form.height} onChangeText={(v) => set('height', v)}
+                    placeholder="e.g. 178 cm" />
                 </View>
                 <View style={styles.rowDivider} />
                 <View style={styles.half}>
-                  <Field
-                    label="Weight"
-                    value={form.weight}
-                    onChangeText={(v) => set('weight', v)}
-                    placeholder="e.g. 75 kg"
-                    padded
-                  />
+                  <Field label="Weight" value={form.weight} onChangeText={(v) => set('weight', v)}
+                    placeholder="e.g. 75 kg" />
                 </View>
               </View>
               <View style={styles.divider} />
-              <Field
-                label="Favourite Club"
-                value={form.favourite_club}
-                onChangeText={(v) => set('favourite_club', v)}
-                placeholder="e.g. Arsenal"
-                padded
-              />
+              <Field label="Favourite Club" value={form.favourite_club}
+                onChangeText={(v) => set('favourite_club', v)} placeholder="e.g. Arsenal" />
             </View>
 
             {/* ── Account ── */}
             <Text style={styles.sectionLabel}>Account</Text>
             <View style={styles.card}>
-              <Dropdown
-                label="Profile Visibility"
-                value={form.visibility}
-                options={VISIBILITY_OPTIONS}
-                onChange={(v) => set('visibility', v)}
-                placeholder="Select visibility"
-                flat
-              />
+              {isWeb ? (
+                <LabeledRow label="Profile Visibility">
+                  <WebSelect value={form.visibility} onChange={(v) => set('visibility', v)}
+                    options={VISIBILITY_OPTIONS} placeholder="Select visibility" />
+                </LabeledRow>
+              ) : (
+                <Dropdown label="Profile Visibility" value={form.visibility}
+                  options={VISIBILITY_OPTIONS} onChange={(v) => set('visibility', v)}
+                  placeholder="Select visibility" flat />
+              )}
             </View>
 
             <TouchableOpacity
@@ -308,8 +356,17 @@ export default function EditProfileScreen() {
   );
 }
 
+function LabeledRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <View style={fieldStyles.containerPadded}>
+      <Text style={fieldStyles.label}>{label}</Text>
+      {children}
+    </View>
+  );
+}
+
 function Field({
-  label, value, onChangeText, placeholder, keyboardType, autoCapitalize, prefix, padded, disabled,
+  label, value, onChangeText, placeholder, keyboardType, autoCapitalize, prefix, disabled,
 }: {
   label: string;
   value: string;
@@ -318,11 +375,10 @@ function Field({
   keyboardType?: 'default' | 'number-pad';
   autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
   prefix?: string;
-  padded?: boolean;
   disabled?: boolean;
 }) {
   return (
-    <View style={[fieldStyles.container, padded && fieldStyles.containerPadded]}>
+    <View style={fieldStyles.containerPadded}>
       <Text style={fieldStyles.label}>{label}</Text>
       <View style={fieldStyles.inputRow}>
         {prefix ? <Text style={fieldStyles.prefix}>{prefix}</Text> : null}
@@ -343,8 +399,7 @@ function Field({
 }
 
 const fieldStyles = StyleSheet.create({
-  container: { gap: 4 },
-  containerPadded: { paddingVertical: 12 },
+  containerPadded: { gap: 4, paddingVertical: 12 },
   label: {
     color: Colors.textSecondary,
     fontSize: 11,
@@ -366,6 +421,7 @@ const fieldStyles = StyleSheet.create({
     color: Colors.textPrimary,
     fontSize: 15,
     paddingVertical: 2,
+    ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as object) : null),
   },
   inputDisabled: {
     color: Colors.textMuted,
@@ -375,7 +431,12 @@ const fieldStyles = StyleSheet.create({
 const styles = StyleSheet.create({
   flex: { flex: 1, backgroundColor: Colors.background },
   container: { flex: 1, backgroundColor: Colors.background },
-  content: { paddingHorizontal: 16 },
+  content: {
+    paddingHorizontal: 16,
+    width: '100%',
+    maxWidth: 620,
+    alignSelf: 'center',
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',

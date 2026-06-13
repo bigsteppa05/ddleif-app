@@ -1,17 +1,61 @@
-import { useEffect } from 'react';
-import { Stack, useRouter } from 'expo-router';
+import { useEffect, useRef, useState } from 'react';
+import { Platform, View, ActivityIndicator } from 'react-native';
+import { Stack, useRouter, usePathname } from 'expo-router';
+import * as Notifications from 'expo-notifications';
 import { supabase } from '@/lib/supabase';
+import { setupNotifications } from '@/lib/notifications';
 import { Colors } from '@/constants/colors';
+import { DEV_BYPASS_AUTH } from '@/constants/dev';
+import { CookieConsent } from '@/components/CookieConsent';
 
 export default function RootLayout() {
   const router = useRouter();
+  const pathname = usePathname();
+  const pathnameRef = useRef(pathname);
+  // null = still checking the stored session
+  const [isLoggedIn, setIsLoggedIn] = useState<boolean | null>(null);
+  const notificationListener = useRef<Notifications.EventSubscription | null>(null);
+  const responseListener = useRef<Notifications.EventSubscription | null>(null);
+
+  useEffect(() => { pathnameRef.current = pathname; }, [pathname]);
+
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+
+    setupNotifications();
+
+    responseListener.current = Notifications.addNotificationResponseReceivedListener((response) => {
+      const data = response.notification.request.content.data;
+      if (data?.type === 'event_reminder' && data?.bookingId) {
+        router.push({
+          pathname: '/booking/ticket',
+          params: { bookingId: data.bookingId as string, eventId: '' },
+        });
+      }
+    });
+
+    return () => {
+      notificationListener.current?.remove();
+      responseListener.current?.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setIsLoggedIn(!!session);
+    });
+  }, []);
 
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      setIsLoggedIn(!!session);
       if (event === 'SIGNED_OUT') {
         router.replace('/(auth)/welcome');
       } else if (event === 'SIGNED_IN' && session) {
-        router.replace('/(tabs)');
+        // Don't redirect mid-registration — let the register screen handle its own flow
+        if (!pathnameRef.current.includes('register')) {
+          router.replace('/(tabs)');
+        }
       } else if (event === 'PASSWORD_RECOVERY') {
         router.push('/(auth)/reset-password');
       }
@@ -19,33 +63,49 @@ export default function RootLayout() {
     return () => subscription.unsubscribe();
   }, []);
 
+  // Hold rendering until the stored session is known so deep links resolve
+  // against the correct guard instead of bouncing through the index route.
+  if (isLoggedIn === null) {
+    return (
+      <View style={{ flex: 1, backgroundColor: Colors.background, alignItems: 'center', justifyContent: 'center' }}>
+        <ActivityIndicator color={Colors.primary} />
+      </View>
+    );
+  }
+
   return (
+    <>
     <Stack
       screenOptions={{
         headerShown: false,
         contentStyle: { backgroundColor: Colors.background },
-        animation: 'slide_from_right',
+        animation: Platform.OS === 'web' ? 'none' : 'slide_from_right',
       }}
     >
       <Stack.Screen name="index" />
       <Stack.Screen name="(auth)" options={{ animation: 'fade' }} />
-      <Stack.Screen name="(tabs)" />
-      <Stack.Screen
-        name="event/[id]"
-        options={{ animation: 'slide_from_bottom', headerShown: false }}
-      />
-      <Stack.Screen name="admin" />
-      <Stack.Screen name="profile/edit" />
-      <Stack.Screen name="credits/topup" />
-      <Stack.Screen name="credits/history" />
-      <Stack.Screen
-        name="booking/confirmed"
-        options={{ animation: 'slide_from_bottom', headerShown: false }}
-      />
-      <Stack.Screen
-        name="booking/ticket"
-        options={{ animation: 'slide_from_bottom', headerShown: false }}
-      />
+      <Stack.Screen name="legal/[page]" />
+      <Stack.Protected guard={isLoggedIn || DEV_BYPASS_AUTH}>
+        <Stack.Screen name="(tabs)" />
+        <Stack.Screen
+          name="event/[id]"
+          options={{ animation: 'slide_from_bottom', headerShown: false }}
+        />
+        <Stack.Screen name="admin" />
+        <Stack.Screen name="profile/edit" />
+        <Stack.Screen name="credits/topup" />
+        <Stack.Screen name="credits/history" />
+        <Stack.Screen
+          name="booking/confirmed"
+          options={{ animation: 'slide_from_bottom', headerShown: false }}
+        />
+        <Stack.Screen
+          name="booking/ticket"
+          options={{ animation: 'slide_from_bottom', headerShown: false }}
+        />
+      </Stack.Protected>
     </Stack>
+    <CookieConsent />
+    </>
   );
 }

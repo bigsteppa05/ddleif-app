@@ -8,8 +8,88 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Notifications from 'expo-notifications';
 import { Colors } from '@/constants/colors';
+import { KES_PER_CREDIT } from '@/constants/payments';
 import { supabase, getUserProfile, checkIsAdmin, updateProfile, type Profile } from '@/lib/supabase';
 import { GENDERS, COUNTRIES } from '@/lib/options';
+import { FW, WBtn, WGhostBtn, WAvatar, PageTitle, useIsDesktopWeb } from '@/components/web/kit';
+
+// ── Desktop settings primitives ───────────────────────────────────
+function WebSettingsGroup({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <View>
+      <Text style={webStyles.groupTitle}>{title}</Text>
+      <View style={webStyles.groupCard}>{children}</View>
+    </View>
+  );
+}
+
+function WebSettingsRow({ label, value, toggle, on, danger, last, onPress }: {
+  label: string; value?: string; toggle?: boolean; on?: boolean;
+  danger?: boolean; last?: boolean; onPress?: () => void;
+}) {
+  return (
+    <TouchableOpacity
+      style={[webStyles.settingsRow, !last && { borderBottomWidth: 1, borderBottomColor: FW.borderSoft }]}
+      activeOpacity={0.75}
+      onPress={onPress}
+    >
+      <Text style={[webStyles.settingsLabel, danger && { color: FW.error }]}>{label}</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+        {value ? <Text style={{ fontSize: 14, color: FW.sec }}>{value}</Text> : null}
+        {toggle ? (
+          <View style={[webStyles.toggle, { backgroundColor: on ? FW.primary : FW.surfaceEl, justifyContent: on ? 'flex-end' : 'flex-start' }]}>
+            <View style={[webStyles.toggleKnob, { backgroundColor: on ? '#0C0C0C' : FW.muted }]} />
+          </View>
+        ) : !danger ? (
+          <Ionicons name="chevron-forward" size={15} color={FW.muted} />
+        ) : null}
+      </View>
+    </TouchableOpacity>
+  );
+}
+
+const webStyles = StyleSheet.create({
+  grid: { flexDirection: 'row', gap: 24, marginTop: 24, alignItems: 'flex-start' },
+  identityCard: {
+    backgroundColor: FW.surface, borderWidth: 1, borderColor: FW.border, borderRadius: 20,
+    paddingVertical: 32, paddingHorizontal: 28, alignItems: 'center',
+  },
+  identityName: { marginTop: 18, fontSize: 21, fontWeight: '800', color: FW.text, letterSpacing: -0.3 },
+  identityHandle: { marginTop: 4, fontSize: 14, color: FW.sec },
+  identityStats: {
+    marginTop: 22, flexDirection: 'row', width: '100%',
+    borderTopWidth: 1, borderTopColor: FW.borderSoft, paddingTop: 20,
+  },
+  identityStat: { flex: 1, alignItems: 'center' },
+  identityStatValue: { fontSize: 19, fontWeight: '800', color: FW.text },
+  identityStatLabel: { fontSize: 12, color: FW.muted, marginTop: 2 },
+  creditsCard: {
+    backgroundColor: FW.surface, borderWidth: 1, borderColor: FW.border, borderRadius: 20,
+    paddingVertical: 22, paddingHorizontal: 24, flexDirection: 'row', alignItems: 'center', gap: 16,
+  },
+  creditsIcon: {
+    width: 46, height: 46, borderRadius: 14, backgroundColor: FW.limeSoftBg,
+    alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+  },
+  settingsGrid: {
+    flex: 1, flexDirection: 'row', flexWrap: 'wrap', gap: 20, alignItems: 'flex-start',
+  },
+  groupTitle: {
+    fontSize: 12, fontWeight: '700', letterSpacing: 0.8, textTransform: 'uppercase',
+    color: FW.sec, marginHorizontal: 4, marginBottom: 10,
+  },
+  groupCard: {
+    backgroundColor: FW.surface, borderWidth: 1, borderColor: FW.border,
+    borderRadius: 16, overflow: 'hidden', minWidth: 280,
+  },
+  settingsRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingVertical: 15, paddingHorizontal: 20,
+  },
+  settingsLabel: { fontSize: 14.5, fontWeight: '600', color: FW.text },
+  toggle: { width: 44, height: 26, borderRadius: 13, padding: 3 },
+  toggleKnob: { width: 20, height: 20, borderRadius: 10 },
+});
 
 function MenuRow({
   label,
@@ -89,6 +169,7 @@ const avatarStyles = StyleSheet.create({
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const isDesktop = useIsDesktopWeb();
   const [notifications, setNotifications] = useState(false);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -148,7 +229,7 @@ export default function ProfileScreen() {
       if (finalStatus !== 'granted') {
         Alert.alert(
           'Notifications Blocked',
-          'Enable notifications for Fieldd in your device settings.',
+          'Enable notifications for fitXball in your device settings.',
           [
             { text: 'Cancel', style: 'cancel' },
             { text: 'Open Settings', onPress: () => Linking.openSettings() },
@@ -211,6 +292,105 @@ export default function ProfileScreen() {
     return a > 0 ? a : null;
   })();
 
+  if (isDesktop) {
+    const initials = profile?.name
+      ? profile.name.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2)
+      : '?';
+    // Alert.alert is a no-op on web — confirm destructive actions with window.confirm.
+    const webSignOut = async () => {
+      if (typeof window !== 'undefined' && window.confirm('Sign out of fitXball?')) {
+        await supabase.auth.signOut();
+        router.replace('/(auth)/login');
+      }
+    };
+    const webDeactivate = async () => {
+      if (!userId) return;
+      if (typeof window !== 'undefined' && window.confirm("Deactivate your account? You won't be able to log in. Contact support to reactivate.")) {
+        await updateProfile(userId, { deactivated_at: new Date().toISOString() });
+        await supabase.auth.signOut();
+        router.replace('/(auth)/login');
+      }
+    };
+
+    return (
+      <View>
+        <PageTitle title="Profile" />
+        {loading ? (
+          <View style={{ paddingTop: 80, alignItems: 'center' }}>
+            <ActivityIndicator color={FW.primary} />
+          </View>
+        ) : (
+          <View style={webStyles.grid}>
+            {/* Left: identity + credits */}
+            <View style={{ width: 340, gap: 16 }}>
+              <View style={webStyles.identityCard}>
+                <WAvatar initials={initials} size={88} />
+                <Text style={webStyles.identityName}>{profile?.name || '—'}</Text>
+                <Text style={webStyles.identityHandle}>
+                  {profile?.username ? `@${profile.username}` : profile?.email}{countryLabel ? ` · ${countryLabel}` : ''}
+                </Text>
+                <View style={webStyles.identityStats}>
+                  {[
+                    [String(profile?.credits ?? 0), 'credits'],
+                    [age ? String(age) : '—', 'age'],
+                    [String(joinedYear || '—'), 'joined'],
+                  ].map(([n, l], i) => (
+                    <View key={l} style={[webStyles.identityStat, i > 0 && { borderLeftWidth: 1, borderLeftColor: FW.borderSoft }]}>
+                      <Text style={webStyles.identityStatValue}>{n}</Text>
+                      <Text style={webStyles.identityStatLabel}>{l}</Text>
+                    </View>
+                  ))}
+                </View>
+              </View>
+              <View style={webStyles.creditsCard}>
+                <View style={webStyles.creditsIcon}>
+                  <Ionicons name="server-outline" size={23} color={FW.primary} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 15.5, fontWeight: '800', color: FW.text }}>{profile?.credits ?? 0} credits</Text>
+                  <Text style={{ fontSize: 12.5, color: FW.sec, marginTop: 2 }}>1 credit = KES {KES_PER_CREDIT}</Text>
+                </View>
+                <WBtn label="Top up" size="sm" onPress={() => router.push('/credits/topup')} />
+              </View>
+            </View>
+
+            {/* Right: settings groups */}
+            <View style={webStyles.settingsGrid}>
+              <WebSettingsGroup title="Account">
+                <WebSettingsRow label="Personal info" onPress={() => router.push('/profile/edit')} last />
+              </WebSettingsGroup>
+              <WebSettingsGroup title="Preferences">
+                <WebSettingsRow
+                  label="Notifications"
+                  toggle
+                  on={notifications}
+                  onPress={() => handleNotificationToggle(!notifications)}
+                  last
+                />
+              </WebSettingsGroup>
+              <WebSettingsGroup title="Credits">
+                <WebSettingsRow label="Top up credits" onPress={() => router.push('/credits/topup')} />
+                <WebSettingsRow label="Transaction history" onPress={() => router.push('/credits/history')} last />
+              </WebSettingsGroup>
+              {isAdmin && (
+                <WebSettingsGroup title="Admin">
+                  <WebSettingsRow label="Admin dashboard" onPress={() => router.push('/admin')} last />
+                </WebSettingsGroup>
+              )}
+              <WebSettingsGroup title="Support">
+                <WebSettingsRow label="Terms & privacy" onPress={() => router.push('/legal/terms')} last />
+              </WebSettingsGroup>
+              <WebSettingsGroup title="Session">
+                <WebSettingsRow label="Sign out" danger onPress={webSignOut} />
+                <WebSettingsRow label="Deactivate account" danger onPress={webDeactivate} last />
+              </WebSettingsGroup>
+            </View>
+          </View>
+        )}
+      </View>
+    );
+  }
+
   return (
     <View style={{ flex: 1, backgroundColor: Colors.background }}>
       <ScrollView
@@ -249,7 +429,7 @@ export default function ProfileScreen() {
                 style={styles.editButton}
                 onPress={() => router.push('/profile/edit')}
               >
-                <Text style={styles.editButtonText}>Edit Profile</Text>
+                <Text style={styles.editButtonText}>Personal Info</Text>
               </TouchableOpacity>
             </View>
 
@@ -290,7 +470,7 @@ export default function ProfileScreen() {
                 onPress={() =>
                   Share.share({
                     message:
-                      "I'm using Fieldd for sports events in Nairobi — join me. Download the app: https://fieldd.app/download",
+                      "I'm using fitXball for sports events in Nairobi — join me. Download the app: https://fitxball.app/download",
                   })
                 }
               />
@@ -307,18 +487,18 @@ export default function ProfileScreen() {
               <View style={styles.divider} />
               <MenuRow
                 label="Terms of Service"
-                onPress={() => Linking.openURL('https://fieldd.app/terms')}
+                onPress={() => router.push('/legal/terms')}
               />
               <View style={styles.divider} />
               <MenuRow
                 label="Privacy Policy"
-                onPress={() => Linking.openURL('https://fieldd.app/privacy')}
+                onPress={() => router.push('/legal/privacy')}
               />
               <View style={styles.divider} />
               <MenuRow
                 label="Help"
                 onPress={() =>
-                  Linking.openURL('mailto:support@fieldd.app?subject=Fieldd%20Support%20Request')
+                  Linking.openURL('mailto:support@fitXball.app?subject=fitXball%20Support%20Request')
                 }
               />
               {isAdmin && (

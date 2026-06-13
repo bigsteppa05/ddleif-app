@@ -15,10 +15,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import { Colors } from '@/constants/colors';
+import { AuthShell, AuthHeading, LimeLink, WBtn, FW, useIsDesktopWeb } from '@/components/web/kit';
+import { WField } from '@/components/web/WField';
 
 export default function ForgotScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const isDesktop = useIsDesktopWeb();
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -31,12 +34,52 @@ export default function ForgotScreen() {
     }
     setError('');
     setLoading(true);
-    await supabase.auth.resetPasswordForEmail(trimmed, {
-      redirectTo: 'fieldd://reset-password',
-    });
+    // Web: link must open in the browser; native: use the app's deep-link scheme
+    const redirectTo = Platform.OS === 'web'
+      ? `${window.location.origin}/reset-password`
+      : 'fitxball://reset-password';
+    await supabase.auth.resetPasswordForEmail(trimmed, { redirectTo });
     setLoading(false);
     // Navigate to check-inbox regardless (Supabase doesn't leak whether email exists)
     router.push({ pathname: '/(auth)/check-inbox', params: { email: trimmed } });
+  }
+
+  if (isDesktop) {
+    return (
+      <AuthShell
+        footer={
+          <Text style={{ fontSize: 13.5, color: FW.sec }}>
+            Remembered it? <LimeLink onPress={() => router.back()}>Back to sign in</LimeLink>
+          </Text>
+        }
+      >
+        <AuthHeading
+          title="Reset your password"
+          sub="Enter the email on your account and we'll send you a secure link to set a new password."
+        />
+        <View style={{ gap: 20 }}>
+          <WField
+            label="Email"
+            value={email}
+            onChangeText={(v) => { setEmail(v); setError(''); }}
+            placeholder="you@example.com"
+            keyboardType="email-address"
+            autoCapitalize="none"
+            autoCorrect={false}
+            onSubmitEditing={handleSend}
+            error={error || undefined}
+            autoFocus
+          />
+          {loading ? (
+            <View style={{ alignItems: 'center', paddingVertical: 16 }}>
+              <ActivityIndicator color={FW.primary} />
+            </View>
+          ) : (
+            <WBtn label="Send Reset Link" size="lg" full onPress={handleSend} />
+          )}
+        </View>
+      </AuthShell>
+    );
   }
 
   return (

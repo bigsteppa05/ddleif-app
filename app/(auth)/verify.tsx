@@ -1,35 +1,40 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
-  TextInput,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
+import { OtpInput } from '@/components/OtpInput';
 import { Colors } from '@/constants/colors';
+import { AuthShell, AuthHeading, LimeLink, WBtn, FW, useIsDesktopWeb } from '@/components/web/kit';
 
-const CODE_LENGTH = 6;
+const CODE_LENGTH = 8;
 
 export default function VerifyScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { phone } = useLocalSearchParams<{ phone: string }>();
+  const isDesktop = useIsDesktopWeb();
+  const { phone, email, type, next } = useLocalSearchParams<{
+    phone?: string;
+    email?: string;
+    type?: 'sms' | 'email';
+    next?: string;
+  }>();
+  const otpType = type ?? 'sms';
 
-  const [digits, setDigits] = useState<string[]>(Array(CODE_LENGTH).fill(''));
-  const [focused, setFocused] = useState(0);
+  const [code, setCode] = useState('');
   const [error, setError] = useState('');
   const [verified, setVerified] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [countdown, setCountdown] = useState(27);
+  const [countdown, setCountdown] = useState(60);
   const [canResend, setCanResend] = useState(false);
-  const inputRefs = useRef<(TextInput | null)[]>([]);
 
-  const code = digits.join('');
   const isFull = code.length === CODE_LENGTH;
 
   useEffect(() => {
@@ -38,37 +43,16 @@ export default function VerifyScreen() {
     return () => clearInterval(t);
   }, [countdown]);
 
-  function handleDigit(value: string, index: number) {
-    const char = value.slice(-1);
-    if (char && !/\d/.test(char)) return;
-    const next = [...digits];
-    next[index] = char;
-    setDigits(next);
-    setError('');
-    if (char && index < CODE_LENGTH - 1) {
-      inputRefs.current[index + 1]?.focus();
-      setFocused(index + 1);
-    }
-  }
 
-  function handleKeyPress(key: string, index: number) {
-    if (key === 'Backspace' && !digits[index] && index > 0) {
-      const next = [...digits];
-      next[index - 1] = '';
-      setDigits(next);
-      inputRefs.current[index - 1]?.focus();
-      setFocused(index - 1);
-    }
-  }
-
-  async function handleVerify() {
-    if (!isFull) return;
+  async function handleVerify(overrideCode?: string) {
+    const token = overrideCode ?? code;
+    if (token.length < CODE_LENGTH) return;
     setLoading(true);
-    const { error: verifyError } = await supabase.auth.verifyOtp({
-      phone: phone ?? '',
-      token: code,
-      type: 'sms',
-    });
+    const { error: verifyError } = await supabase.auth.verifyOtp(
+      otpType === 'email'
+        ? { email: email ?? '', token, type: 'email' }
+        : { phone: phone ?? '', token, type: 'sms' }
+    );
     setLoading(false);
     if (verifyError) {
       setError("That code isn't right. Check and try again.");
@@ -81,18 +65,90 @@ export default function VerifyScreen() {
     if (!canResend) return;
     setCanResend(false);
     setCountdown(27);
-    await supabase.auth.signInWithOtp({ phone: phone ?? '' });
+    if (otpType === 'email') {
+      await supabase.auth.signInWithOtp({ email: email ?? '' });
+    } else {
+      await supabase.auth.signInWithOtp({ phone: phone ?? '' });
+    }
   }
 
-  const displayPhone = phone
-    ? `+254 ${phone.replace(/^(\+?254)?/, '').replace(/(\d{3})(\d{3})(\d{3})/, '$1 $2 $3')}`
-    : '+254 ···';
+  const displayTarget = otpType === 'email'
+    ? (email ?? '···')
+    : phone
+      ? `+254 ${phone.replace(/^(\+?254)?/, '').replace(/(\d{3})(\d{3})(\d{3})/, '$1 $2 $3')}`
+      : '+254 ···';
+
+  if (isDesktop) {
+    return (
+      <AuthShell
+        footer={
+          <Text style={{ fontSize: 13.5, color: FW.sec }}>
+            Wrong {otpType === 'email' ? 'email' : 'number'}?{' '}
+            <LimeLink onPress={() => (router.canGoBack() ? router.back() : router.replace('/(auth)/welcome'))}>
+              Go back and change it
+            </LimeLink>
+          </Text>
+        }
+      >
+        <AuthHeading
+          title={otpType === 'email' ? 'Verify your email' : 'Verify your number'}
+          sub={`Enter the ${CODE_LENGTH}-digit code we sent to ${displayTarget} to confirm it's you.`}
+        />
+        <OtpInput
+          value={code}
+          length={CODE_LENGTH}
+          onChange={(v) => { setCode(v); setError(''); }}
+          onComplete={handleVerify}
+          hasError={!!error}
+          verified={verified}
+          autoFocus
+        />
+        {!!error && (
+          <Text style={{ color: FW.error, fontSize: 13.5, marginTop: 16 }}>{error}</Text>
+        )}
+        {verified && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 16 }}>
+            <Ionicons name="checkmark-circle" size={16} color={FW.primary} />
+            <Text style={{ color: FW.primary, fontSize: 13.5, fontWeight: '700' }}>Verified</Text>
+          </View>
+        )}
+        {!verified && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 24 }}>
+            <Text style={{ color: FW.sec, fontSize: 14 }}>Didn't get a code?</Text>
+            {canResend ? (
+              <Text onPress={handleResend} style={{ color: FW.primary, fontSize: 14, fontWeight: '700' }}>
+                Resend code
+              </Text>
+            ) : (
+              <Text style={{ color: FW.muted, fontSize: 14 }}>
+                Resend in 0:{countdown.toString().padStart(2, '0')}
+              </Text>
+            )}
+          </View>
+        )}
+        {loading ? (
+          <View style={{ alignItems: 'center', paddingVertical: 18, marginTop: 32 }}>
+            <ActivityIndicator color={FW.primary} />
+          </View>
+        ) : (
+          <WBtn
+            label={verified ? 'Continue' : 'Verify'}
+            size="lg"
+            full
+            dim={!verified && !isFull}
+            onPress={() => (verified ? router.replace((next ?? '/(auth)/register') as any) : handleVerify())}
+            style={{ marginTop: 32 }}
+          />
+        )}
+      </AuthShell>
+    );
+  }
 
   return (
     <View style={[styles.container, { paddingTop: insets.top + 12 }]}>
       {/* Header */}
       <View style={styles.stepHeader}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+        <TouchableOpacity style={styles.backBtn} onPress={() => router.canGoBack() ? router.back() : router.replace('/(auth)/welcome')}>
           <Ionicons name="arrow-back" size={20} color={Colors.textPrimary} />
         </TouchableOpacity>
         <StepDots step={1} total={4} />
@@ -103,44 +159,21 @@ export default function VerifyScreen() {
 
       <View style={styles.body}>
         <Text style={styles.desc}>
-          We sent a 6-digit code to{' '}
-          <Text style={styles.phoneHighlight}>{displayPhone}</Text>.{'\n'}
-          Enter it below to confirm it's you.
+          Enter the {CODE_LENGTH}-digit code we sent to{' '}
+          <Text style={styles.phoneHighlight}>{displayTarget}</Text>{'\n'}
+          to confirm it's you.
         </Text>
 
-        {/* OTP boxes */}
-        <View style={styles.boxRow}>
-          {digits.map((d, i) => {
-            const isActive = focused === i && !verified;
-            const isError = !!error;
-            const isVerified = verified;
-            return (
-              <View
-                key={i}
-                style={[
-                  styles.box,
-                  isActive && styles.boxActive,
-                  isError && styles.boxError,
-                  isVerified && styles.boxVerified,
-                ]}
-              >
-                <TextInput
-                  ref={(r) => { inputRefs.current[i] = r; }}
-                  style={styles.boxInput}
-                  value={d}
-                  onChangeText={(v) => handleDigit(v, i)}
-                  onKeyPress={({ nativeEvent }) => handleKeyPress(nativeEvent.key, i)}
-                  onFocus={() => setFocused(i)}
-                  keyboardType="number-pad"
-                  maxLength={1}
-                  textAlign="center"
-                  caretHidden
-                  editable={!verified}
-                />
-              </View>
-            );
-          })}
-        </View>
+        {/* OTP input */}
+        <OtpInput
+          value={code}
+          length={CODE_LENGTH}
+          onChange={(v) => { setCode(v); setError(''); }}
+          onComplete={handleVerify}
+          hasError={!!error}
+          verified={verified}
+          autoFocus
+        />
 
         {/* Error / success state */}
         {error ? (
@@ -187,7 +220,7 @@ export default function VerifyScreen() {
         {verified ? (
           <TouchableOpacity
             style={styles.cta}
-            onPress={() => router.push('/(auth)/register')}
+            onPress={() => router.replace((next ?? '/(auth)/register') as any)}
             activeOpacity={0.85}
           >
             <Text style={styles.ctaText}>Continue</Text>
@@ -195,7 +228,7 @@ export default function VerifyScreen() {
         ) : (
           <TouchableOpacity
             style={[styles.cta, (!isFull || loading) && styles.ctaDim]}
-            onPress={handleVerify}
+            onPress={() => handleVerify()}
             disabled={!isFull || loading}
             activeOpacity={0.85}
           >

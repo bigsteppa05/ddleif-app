@@ -14,6 +14,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase, checkInBooking } from '@/lib/supabase';
 import { Colors } from '@/constants/colors';
+import { notify } from '@/lib/ui';
+import { FW, WBtn, WGhostBtn, WTag, WAvatar, StatBlock, PageTitle, useIsDesktopWeb } from '@/components/web/kit';
+import { WebShell } from '@/components/web/WebShell';
 
 type AttendeeRow = {
   id: string;
@@ -35,6 +38,7 @@ export default function RefListScreen() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [checkingIn, setCheckingIn] = useState<string | null>(null);
+  const isDesktop = useIsDesktopWeb();
 
   useFocusEffect(
     useCallback(() => {
@@ -100,7 +104,7 @@ export default function RefListScreen() {
           )
         );
       } else {
-        Alert.alert('Error', result.error);
+        notify('Error', result.error);
       }
       return;
     }
@@ -130,6 +134,127 @@ export default function RefListScreen() {
 
   const checkedInCount = attendees.filter((a) => a.checkedIn).length;
   const total = attendees.length;
+
+  if (isDesktop) {
+    const cols = { ref: 170, time: 130, status: 160 };
+    return (
+      <WebShell admin maxWidth={1020}>
+        <PageTitle
+          kicker={`Admin${eventTitle ? ` · ${eventTitle}` : ''}${eventDate ? ` · ${eventDate}` : ''}`}
+          title="Entry list"
+          sub="Backup check-in when scanning isn't possible."
+          right={
+            <View style={{ flexDirection: 'row', gap: 10 }}>
+              <WGhostBtn
+                label="Print"
+                icon="download-outline"
+                size="sm"
+                onPress={() => { if (typeof window !== 'undefined') window.print(); }}
+              />
+              <WBtn
+                label="Scan Mode"
+                icon="qr-code-outline"
+                size="sm"
+                onPress={() =>
+                  router.push({
+                    pathname: '/admin/scanner',
+                    params: { eventId, eventTitle, eventDate, total: String(total) },
+                  })
+                }
+              />
+            </View>
+          }
+        />
+        <View style={{ flexDirection: 'row', gap: 14, marginTop: 22, marginBottom: 24 }}>
+          <StatBlock label="Booked" value={total} />
+          <StatBlock label="Checked in" value={checkedInCount} />
+          <StatBlock label="Outstanding" value={total - checkedInCount} />
+        </View>
+        <View style={{
+          flexDirection: 'row', alignItems: 'center', gap: 10, width: 300, marginBottom: 18,
+          backgroundColor: FW.surface, borderWidth: 1, borderColor: FW.border,
+          borderRadius: 999, paddingVertical: 11, paddingHorizontal: 18,
+        }}>
+          <Ionicons name="search-outline" size={16} color={FW.muted} />
+          <TextInput
+            style={[{ flex: 1, color: FW.text, fontSize: 14, padding: 0 }, { outlineStyle: 'none' } as any]}
+            value={search}
+            onChangeText={setSearch}
+            placeholder="Search name or reference…"
+            placeholderTextColor={FW.muted}
+          />
+        </View>
+        {loading ? (
+          <View style={{ paddingTop: 60, alignItems: 'center' }}>
+            <ActivityIndicator color={FW.primary} />
+          </View>
+        ) : (
+          <View style={{
+            backgroundColor: FW.surface, borderWidth: 1, borderColor: FW.border,
+            borderRadius: 18, overflow: 'hidden',
+          }}>
+            <View style={{
+              flexDirection: 'row', alignItems: 'center',
+              paddingVertical: 14, paddingHorizontal: 18,
+              borderBottomWidth: 1, borderBottomColor: FW.border, backgroundColor: FW.panel,
+            }}>
+              <Text style={[webStyles.th, { flex: 1 }]}>Player</Text>
+              <Text style={[webStyles.th, { width: cols.ref }]}>Booking ref</Text>
+              <Text style={[webStyles.th, { width: cols.time }]}>Checked in</Text>
+              <Text style={[webStyles.th, { width: cols.status, textAlign: 'right' }]}>Status</Text>
+            </View>
+            {filtered.length === 0 ? (
+              <View style={{ paddingVertical: 48, alignItems: 'center' }}>
+                <Text style={{ color: FW.sec, fontSize: 14 }}>
+                  {search ? 'No matches found.' : 'No bookings yet.'}
+                </Text>
+              </View>
+            ) : (
+              filtered.map((item, idx) => (
+                <View key={item.id} style={{
+                  flexDirection: 'row', alignItems: 'center',
+                  paddingVertical: 14, paddingHorizontal: 18,
+                  borderBottomWidth: idx === filtered.length - 1 ? 0 : 1, borderBottomColor: FW.borderSoft,
+                }}>
+                  <View style={{ flex: 1, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', gap: 12, minWidth: 0 }}>
+                    <WAvatar initials={item.initials} size={34} lime={item.checkedIn} />
+                    <Text
+                      style={{ fontSize: 14, fontWeight: '700', color: item.checkedIn ? FW.text : FW.sec }}
+                      numberOfLines={1}
+                    >
+                      {item.name}
+                    </Text>
+                  </View>
+                  <Text style={{
+                    width: cols.ref, paddingHorizontal: 8,
+                    fontFamily: FW.mono, fontSize: 13, letterSpacing: 1, color: FW.sec,
+                  }}>
+                    {item.bookingRef}
+                  </Text>
+                  <Text style={{
+                    width: cols.time, paddingHorizontal: 8,
+                    fontFamily: FW.mono, fontSize: 13,
+                    color: item.checkInTime ? FW.text : FW.muted,
+                  }}>
+                    {item.checkInTime ?? '—'}
+                  </Text>
+                  <View style={{ width: cols.status, paddingHorizontal: 8, alignItems: 'flex-end' }}>
+                    {item.checkedIn ? (
+                      <WTag label="Checked in" tone="limeSoft" />
+                    ) : checkingIn === item.id ? (
+                      <ActivityIndicator size="small" color={FW.primary} />
+                    ) : (
+                      <WGhostBtn label="Check in" size="sm" onPress={() => handleCheckIn(item.id)} />
+                    )}
+                  </View>
+                </View>
+              ))
+            )}
+          </View>
+        )}
+      </WebShell>
+    );
+  }
 
   return (
     <View style={[styles.container, { paddingTop: insets.top + 12 }]}>
@@ -230,6 +355,14 @@ export default function RefListScreen() {
     </View>
   );
 }
+
+const webStyles = StyleSheet.create({
+  th: {
+    paddingHorizontal: 8,
+    fontSize: 11.5, fontWeight: '700', letterSpacing: 0.7,
+    textTransform: 'uppercase', color: FW.muted,
+  },
+});
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },

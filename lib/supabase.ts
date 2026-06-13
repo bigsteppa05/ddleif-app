@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 
 export const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL!;
@@ -6,7 +7,13 @@ export const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!;
 
 const ADMIN_EMAIL = process.env.EXPO_PUBLIC_ADMIN_EMAIL ?? '';
 
-const ExpoSecureStoreAdapter = {
+const webStorageAdapter = {
+  getItem: (key: string) => Promise.resolve(localStorage.getItem(key)),
+  setItem: (key: string, value: string) => { localStorage.setItem(key, value); return Promise.resolve(); },
+  removeItem: (key: string) => { localStorage.removeItem(key); return Promise.resolve(); },
+};
+
+const nativeStorageAdapter = {
   getItem: (key: string) => SecureStore.getItemAsync(key),
   setItem: (key: string, value: string) => SecureStore.setItemAsync(key, value),
   removeItem: (key: string) => SecureStore.deleteItemAsync(key),
@@ -14,10 +21,10 @@ const ExpoSecureStoreAdapter = {
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {
-    storage: ExpoSecureStoreAdapter,
+    storage: Platform.OS === 'web' ? webStorageAdapter : nativeStorageAdapter,
     autoRefreshToken: true,
     persistSession: true,
-    detectSessionInUrl: false,
+    detectSessionInUrl: Platform.OS === 'web',
   },
 });
 
@@ -36,6 +43,7 @@ export type Profile = {
   height: string | null;
   weight: string | null;
   phone: string | null;
+  sms_marketing_consent: boolean;
   visibility: string | null;
   notifications_enabled: boolean | null;
   deactivated_at: string | null;
@@ -188,24 +196,15 @@ export async function getUserProfile(userId?: string): Promise<Profile | null> {
   return created;
 }
 
-export async function bookEvent(userId: string, eventId: string): Promise<void> {
-  const { error } = await supabase
-    .from('bookings')
-    .insert({ user_id: userId, event_id: eventId, status: 'confirmed' });
-  if (error) throw error;
-}
-
-export async function updateCredits(userId: string, amount: number): Promise<void> {
-  const { error } = await supabase.rpc('update_credits', { user_id: userId, delta: amount });
-  if (error) throw error;
-}
 
 export type BookingWithEvent = {
   id: string;
   user_id: string;
   event_id: string;
+  booking_ref: string;
   created_at: string;
   status: string;
+  checked_in_at: string | null;
   events: Event | null;
 };
 
@@ -214,7 +213,7 @@ export async function getUserBookings(userId: string): Promise<BookingWithEvent[
     .from('bookings')
     .select('*, events(*)')
     .eq('user_id', userId)
-    .eq('status', 'confirmed')
+    .in('status', ['confirmed', 'checked_in'])
     .order('created_at', { ascending: false });
   if (error) return [];
   return (data ?? []) as unknown as BookingWithEvent[];
@@ -230,13 +229,36 @@ export async function getUserBookingHistory(userId: string): Promise<BookingWith
   return (data ?? []) as unknown as BookingWithEvent[];
 }
 
+export type Payment = {
+  id: string;
+  user_id: string;
+  phone: string;
+  amount_kes: number;
+  credits: number;
+  status: string;
+  mpesa_receipt: string | null;
+  created_at: string;
+  completed_at: string | null;
+};
+
+export async function getUserPayments(userId: string): Promise<Payment[]> {
+  const { data, error } = await supabase
+    .from('payments')
+    .select('id, user_id, phone, amount_kes, credits, status, mpesa_receipt, created_at, completed_at')
+    .eq('user_id', userId)
+    .eq('status', 'success')
+    .order('created_at', { ascending: false });
+  if (error) return [];
+  return (data ?? []) as Payment[];
+}
+
 export async function checkExistingBooking(userId: string, eventId: string): Promise<boolean> {
   const { data } = await supabase
     .from('bookings')
     .select('id')
     .eq('user_id', userId)
     .eq('event_id', eventId)
-    .eq('status', 'confirmed')
+    .in('status', ['confirmed', 'checked_in'])
     .maybeSingle();
   return data !== null;
 }
@@ -257,44 +279,84 @@ export async function updateProfile(
   userId: string,
   data: Partial<Omit<Profile, 'id' | 'created_at' | 'is_admin'>>
 ): Promise<void> {
+  // The row always exists (created at signup) — UPDATE only needs the update
+  // policy, and a real Error surfaces the actual Postgres message to the UI.
   const { error } = await supabase
     .from('profiles')
-    .upsert({ id: userId, ...data }, { onConflict: 'id' });
-  if (error) throw error;
+    .update(data)
+    .eq('id', userId);
+  if (error) throw new Error(error.message);
 }
 
-export async function uploadEventImage(uri: string): Promise<string | null> {
-  try {
+// Throws on failure so callers can surface the error; files live under
+// event-images/{eventId}/ so replaced images can be traced and cleaned up.
+export async function uploadEventImage(uri: string, eventId?: string): Promise<string> {
+  const response = await fetch(uri);
+  const blob = await response.blob();
+  // Prefer the blob's real MIME type — web blob: URLs carry no file extension
+  const MIME_EXT: Record<string, string> = {
+    'image/jpeg': 'jpg',
+    'image/png': 'png',
+    'image/webp': 'webp',
+  };
+  let ext = MIME_EXT[blob.type];
+  if (!ext) {
     const raw = uri.split('?')[0].split('.').pop()?.toLowerCase() ?? 'jpg';
-    const ext = ['jpg', 'jpeg', 'png', 'webp'].includes(raw) ? raw : 'jpg';
-    const mimeType = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : `image/${ext}`;
-    const path = `${Date.now()}.${ext}`;
-    const response = await fetch(uri);
-    const blob = await response.blob();
-    const { error } = await supabase.storage
-      .from('event-images')
-      .upload(path, blob, { contentType: mimeType, upsert: true });
-    if (error) return null;
-    const { data } = supabase.storage.from('event-images').getPublicUrl(path);
-    return data.publicUrl;
+    ext = ['jpg', 'jpeg', 'png', 'webp'].includes(raw) ? raw : 'jpg';
+  }
+  const mimeType = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : `image/${ext}`;
+  // Unique path (timestamp) → no conflict → upsert:false. The storage-api upsert
+  // path is rejected by RLS; plain insert to a fresh path is the reliable route.
+  const path = `${eventId ?? 'misc'}/${Date.now()}.${ext}`;
+  const { error } = await supabase.storage
+    .from('event-images')
+    .upload(path, blob, { contentType: mimeType, upsert: false });
+  if (error) throw new Error(error.message);
+  const { data } = supabase.storage.from('event-images').getPublicUrl(path);
+  return data.publicUrl;
+}
+
+// Best-effort removal of a previously uploaded event image by its public URL.
+export async function deleteEventImage(publicUrl: string): Promise<void> {
+  const marker = '/event-images/';
+  const idx = publicUrl.indexOf(marker);
+  if (idx === -1) return;
+  const path = decodeURIComponent(publicUrl.slice(idx + marker.length).split('?')[0]);
+  try {
+    await supabase.storage.from('event-images').remove([path]);
   } catch {
-    return null;
+    // orphan cleanup is non-critical — never block the save on it
   }
 }
 
-export async function uploadAvatar(userId: string, uri: string): Promise<string | null> {
-  try {
-    const ext = uri.split('.').pop()?.toLowerCase() ?? 'jpg';
-    const path = `${userId}.${ext}`;
-    const response = await fetch(uri);
-    const blob = await response.blob();
-    const { error } = await supabase.storage
-      .from('avatars')
-      .upload(path, blob, { contentType: `image/${ext}`, upsert: true });
-    if (error) return null;
-    const { data } = supabase.storage.from('avatars').getPublicUrl(path);
-    return data.publicUrl;
-  } catch {
-    return null;
+// Throws on failure so callers can surface the error.
+export async function uploadAvatar(userId: string, uri: string): Promise<string> {
+  const response = await fetch(uri);
+  const blob = await response.blob();
+  const MIME_EXT: Record<string, string> = {
+    'image/jpeg': 'jpg',
+    'image/png': 'png',
+    'image/webp': 'webp',
+  };
+  let ext = MIME_EXT[blob.type];
+  if (!ext) {
+    const raw = uri.split('?')[0].split('.').pop()?.toLowerCase() ?? 'jpg';
+    ext = ['jpg', 'jpeg', 'png', 'webp'].includes(raw) ? raw : 'jpg';
   }
+  const mimeType = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : `image/${ext}`;
+  // Foldered, unique path → upsert:false works; old avatars are cleaned up after.
+  const path = `${userId}/${Date.now()}.${ext}`;
+  const { error } = await supabase.storage
+    .from('avatars')
+    .upload(path, blob, { contentType: mimeType, upsert: false });
+  if (error) throw new Error(error.message);
+  // Remove the user's older avatar files (best-effort)
+  supabase.storage.from('avatars').list(userId).then(({ data: files }) => {
+    const stale = (files ?? [])
+      .map((f) => `${userId}/${f.name}`)
+      .filter((p) => p !== path);
+    if (stale.length) supabase.storage.from('avatars').remove(stale);
+  });
+  const { data } = supabase.storage.from('avatars').getPublicUrl(path);
+  return data.publicUrl;
 }

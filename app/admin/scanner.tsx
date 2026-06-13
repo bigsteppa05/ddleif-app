@@ -7,6 +7,7 @@ import {
   Alert,
   ActivityIndicator,
   Animated,
+  Platform,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -14,6 +15,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { supabase, verifyBooking, checkInBooking } from '@/lib/supabase';
 import { Colors } from '@/constants/colors';
+import { useIsDesktopWeb } from '@/components/web/kit';
+import { WebScanner } from '@/components/web/WebScanner';
 
 type ScanState = 'idle' | 'found' | 'notfound' | 'duplicate';
 
@@ -48,6 +51,7 @@ export default function ScannerScreen() {
   const [checkingIn, setCheckingIn] = useState(false);
 
   const scanLineAnim = useRef(new Animated.Value(0)).current;
+  const isDesktop = useIsDesktopWeb();
 
   useEffect(() => {
     const anim = Animated.loop(
@@ -59,6 +63,40 @@ export default function ScannerScreen() {
     anim.start();
     return () => anim.stop();
   }, []);
+
+  if (isDesktop) {
+    return (
+      <WebScanner
+        eventId={eventId ?? ''}
+        eventTitle={eventTitle}
+        eventDate={eventDate}
+        total={total}
+      />
+    );
+  }
+
+  if (Platform.OS === 'web') {
+    return (
+      <View style={[styles.container, styles.center, { backgroundColor: Colors.background, paddingTop: insets.top }]}>
+        <TouchableOpacity style={{ position: 'absolute', top: insets.top + 16, left: 16 }} onPress={() => router.back()}>
+          <Ionicons name="arrow-back" size={22} color={Colors.textPrimary} />
+        </TouchableOpacity>
+        <Ionicons name="camera-outline" size={52} color={Colors.textMuted} />
+        <Text style={{ color: Colors.textPrimary, fontSize: 18, fontWeight: '700', marginTop: 16 }}>
+          Scanner not available on web
+        </Text>
+        <Text style={{ color: Colors.textSecondary, fontSize: 14, textAlign: 'center', marginTop: 8, paddingHorizontal: 32 }}>
+          Use the mobile app to scan QR tickets. You can still check in participants manually from the entry list.
+        </Text>
+        <TouchableOpacity
+          style={{ marginTop: 24, backgroundColor: Colors.primary, borderRadius: 28, paddingHorizontal: 28, paddingVertical: 14 }}
+          onPress={() => router.push({ pathname: '/admin/ref-list', params: { eventId, eventTitle, eventDate } })}
+        >
+          <Text style={{ color: Colors.background, fontSize: 15, fontWeight: '800' }}>Open Entry List</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   if (!permission) {
     return <View style={styles.container} />;
@@ -80,7 +118,7 @@ export default function ScannerScreen() {
     if (!scanning) return;
     setScanning(false);
 
-    // QR format: https://fieldd.app/t/FLD-XXXXXX
+    // QR format: https://fitxball.app/t/FLD-XXXXXX
     const match = data.match(/FLD-([A-Z0-9]{6})/);
     if (!match) {
       setScanState('notfound');

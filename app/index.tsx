@@ -3,6 +3,7 @@ import { View, ActivityIndicator } from 'react-native';
 import { Redirect } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { Colors } from '@/constants/colors';
+import { DEV_BYPASS_AUTH } from '@/constants/dev';
 
 export default function Index() {
   const [checking, setChecking] = useState(true);
@@ -23,5 +24,5 @@ export default function Index() {
     );
   }
 
-  return <Redirect href={isLoggedIn ? '/(tabs)' : '/(auth)/welcome'} />;
+  return <Redirect href={isLoggedIn || DEV_BYPASS_AUTH ? '/(tabs)' : '/(auth)/welcome'} />;
 }

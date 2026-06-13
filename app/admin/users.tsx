@@ -16,7 +16,10 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '@/constants/colors';
+import { notify } from '@/lib/ui';
 import { supabase, grantCredits, type Profile } from '@/lib/supabase';
+import { FW, WTag, WAvatar, PageTitle, useIsDesktopWeb } from '@/components/web/kit';
+import { WebShell } from '@/components/web/WebShell';
 
 export default function AdminUsersScreen() {
   const router = useRouter();
@@ -42,7 +45,7 @@ export default function AdminUsersScreen() {
     if (!grantTarget) return;
     const amount = parseInt(grantAmount, 10);
     if (!amount || isNaN(amount) || amount === 0) {
-      Alert.alert('Invalid', 'Enter a non-zero number of credits.');
+      notify('Invalid', 'Enter a non-zero number of credits.');
       return;
     }
     setGranting(true);
@@ -56,7 +59,7 @@ export default function AdminUsersScreen() {
       setGrantTarget(null);
       setGrantAmount('');
     } catch (err) {
-      Alert.alert('Error', String(err));
+      notify('Error', String(err));
     } finally {
       setGranting(false);
     }
@@ -69,6 +72,133 @@ export default function AdminUsersScreen() {
 
   const initials = (name: string) =>
     name ? name.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2) : '?';
+
+  const isDesktop = useIsDesktopWeb();
+  const [searchQ, setSearchQ] = useState('');
+
+  if (isDesktop) {
+    const filtered = searchQ.trim()
+      ? profiles.filter((p) =>
+          (p.name ?? '').toLowerCase().includes(searchQ.toLowerCase()) ||
+          (p.email ?? '').toLowerCase().includes(searchQ.toLowerCase()) ||
+          (p.username ?? '').toLowerCase().includes(searchQ.toLowerCase()))
+      : profiles;
+
+    const webGrant = (profile: Profile) => {
+      if (typeof window === 'undefined') return;
+      const input = window.prompt(`Grant credits to ${profile.name || profile.email} (use negative to deduct):`, '50');
+      if (input === null) return;
+      const amount = parseInt(input, 10);
+      if (!amount || isNaN(amount)) return;
+      setGrantTarget(profile);
+      grantCredits(profile.id, amount).then(() => {
+        setProfiles((prev) => prev.map((p) => (p.id === profile.id ? { ...p, credits: p.credits + amount } : p)));
+        setGrantTarget(null);
+      });
+    };
+
+    return (
+      <WebShell admin maxWidth={1180}>
+        <PageTitle
+          kicker="Admin"
+          title="Members"
+          right={
+            <View style={{
+              flexDirection: 'row', alignItems: 'center', gap: 10, width: 300,
+              backgroundColor: FW.surface, borderWidth: 1, borderColor: FW.border,
+              borderRadius: 999, paddingVertical: 11, paddingHorizontal: 18,
+            }}>
+              <Ionicons name="search-outline" size={16} color={FW.muted} />
+              <TextInput
+                style={{ flex: 1, color: FW.text, fontSize: 14, padding: 0, outlineStyle: 'none' } as any}
+                value={searchQ}
+                onChangeText={setSearchQ}
+                placeholder="Search name, email, @username…"
+                placeholderTextColor={FW.muted}
+              />
+            </View>
+          }
+        />
+        <View style={{ marginTop: 20, marginBottom: 24 }}>
+          <WTag label={`All members · ${profiles.length}`} tone="limeSoft" />
+        </View>
+        {loading ? (
+          <View style={{ paddingTop: 60, alignItems: 'center' }}>
+            <ActivityIndicator color={FW.primary} />
+          </View>
+        ) : (
+          <View style={{
+            backgroundColor: FW.surface, borderWidth: 1, borderColor: FW.border,
+            borderRadius: 18, overflow: 'hidden',
+          }}>
+            <View style={{
+              flexDirection: 'row', alignItems: 'center',
+              paddingVertical: 14, paddingHorizontal: 18,
+              borderBottomWidth: 1, borderBottomColor: FW.border, backgroundColor: FW.panel,
+            }}>
+              {(['Member', 'Email', 'Credits', 'Role', ''] as const).map((h, i) => (
+                <Text key={i} style={{
+                  flex: i === 0 ? 1 : undefined,
+                  width: i === 1 ? 220 : i === 2 ? 90 : i === 3 ? 90 : i === 4 ? 90 : undefined,
+                  paddingHorizontal: 8,
+                  textAlign: i === 2 ? 'right' : 'left',
+                  fontSize: 11.5, fontWeight: '700', letterSpacing: 0.7,
+                  textTransform: 'uppercase', color: FW.muted,
+                }}>{h}</Text>
+              ))}
+            </View>
+            {filtered.map((item, idx) => (
+              <View key={item.id} style={{
+                flexDirection: 'row', alignItems: 'center',
+                paddingVertical: 15, paddingHorizontal: 18,
+                borderBottomWidth: idx === filtered.length - 1 ? 0 : 1, borderBottomColor: FW.borderSoft,
+              }}>
+                <View style={{ flex: 1, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', gap: 12, minWidth: 0 }}>
+                  <WAvatar initials={initials(item.name)} size={34} lime={item.is_admin} />
+                  <View style={{ minWidth: 0 }}>
+                    <Text style={{ fontSize: 14, fontWeight: '700', color: FW.text }} numberOfLines={1}>
+                      {item.name || 'Unnamed'}
+                    </Text>
+                    {item.username ? (
+                      <Text style={{ fontSize: 12.5, color: FW.muted }} numberOfLines={1}>@{item.username}</Text>
+                    ) : null}
+                  </View>
+                </View>
+                <Text style={{ width: 220, paddingHorizontal: 8, color: FW.sec, fontSize: 13.5 }} numberOfLines={1}>
+                  {item.email}
+                </Text>
+                <Text style={{
+                  width: 90, paddingHorizontal: 8, textAlign: 'right',
+                  fontFamily: FW.mono, fontSize: 13.5, color: FW.text,
+                }}>
+                  {item.credits} cr
+                </Text>
+                <View style={{ width: 90, paddingHorizontal: 8 }}>
+                  {item.is_admin
+                    ? <WTag label="Admin" tone="limeSoft" />
+                    : <Text style={{ color: FW.muted, fontSize: 13 }}>Member</Text>}
+                </View>
+                <View style={{ width: 90, paddingHorizontal: 8, alignItems: 'flex-end' }}>
+                  <TouchableOpacity
+                    style={{
+                      flexDirection: 'row', alignItems: 'center', gap: 5,
+                      backgroundColor: FW.surfaceEl, borderRadius: 9,
+                      paddingVertical: 7, paddingHorizontal: 11,
+                    }}
+                    onPress={() => webGrant(item)}
+                    disabled={grantTarget?.id === item.id}
+                  >
+                    <Ionicons name="add-circle-outline" size={14} color={FW.primary} />
+                    <Text style={{ color: FW.primary, fontSize: 12.5, fontWeight: '700' }}>Grant</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ))}
+          </View>
+        )}
+      </WebShell>
+    );
+  }
 
   return (
     <View style={[styles.container, { paddingTop: insets.top + 12 }]}>

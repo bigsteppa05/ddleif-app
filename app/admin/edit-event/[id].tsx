@@ -13,8 +13,9 @@ import {
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { supabase, getEventById, uploadEventImage } from '@/lib/supabase';
+import { supabase, getEventById, uploadEventImage, deleteEventImage } from '@/lib/supabase';
 import { Colors } from '@/constants/colors';
+import { notify, confirmAsync } from '@/lib/ui';
 import { EventForm, type FormState } from '../add-event';
 
 export default function EditEventScreen() {
@@ -29,7 +30,8 @@ export default function EditEventScreen() {
     async function load() {
       const event = await getEventById(id);
       if (!event) {
-        Alert.alert('Error', 'Event not found.', [{ text: 'OK', onPress: () => router.back() }]);
+        notify('Error', 'Event not found.');
+        router.back();
         return;
       }
       setForm({
@@ -60,15 +62,21 @@ export default function EditEventScreen() {
   async function handleSave() {
     if (!form) return;
     if (!form.title.trim() || !form.sport || !form.date) {
-      Alert.alert('Missing Fields', 'Title, sport, and date are required.');
+      notify('Missing Fields', 'Title, sport, and date are required.');
       return;
     }
     setSaving(true);
 
-    let finalImageUrl = form.image_url || null;
+    const previousImageUrl = form.image_url || null;
+    let finalImageUrl = previousImageUrl;
     if (form.imageUri) {
-      const uploaded = await uploadEventImage(form.imageUri);
-      if (uploaded) finalImageUrl = uploaded;
+      try {
+        finalImageUrl = await uploadEventImage(form.imageUri, id);
+      } catch (e) {
+        setSaving(false);
+        notify('Image upload failed', `${e instanceof Error ? e.message : e}\nYour changes were not saved — please try again.`);
+        return;
+      }
     }
 
     const { error } = await supabase.from('events').update({
@@ -89,30 +97,26 @@ export default function EditEventScreen() {
 
     setSaving(false);
     if (error) {
-      Alert.alert('Error', error.message);
+      notify('Error', error.message);
     } else {
-      Alert.alert('Saved', 'Event updated successfully.', [
-        { text: 'OK', onPress: () => router.back() },
-      ]);
+      // Image was replaced — clean up the old file (fire-and-forget)
+      if (previousImageUrl && finalImageUrl !== previousImageUrl) {
+        deleteEventImage(previousImageUrl);
+      }
+      notify('Saved', 'Event updated successfully.');
+      router.back();
     }
   }
 
   async function handleDelete() {
-    Alert.alert('Delete Event', 'Are you sure? This cannot be undone.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          const { error } = await supabase.from('events').delete().eq('id', id);
-          if (error) {
-            Alert.alert('Error', error.message);
-          } else {
-            router.back();
-          }
-        },
-      },
-    ]);
+    const ok = await confirmAsync('Delete Event', 'Are you sure? This cannot be undone.', 'Delete', true);
+    if (!ok) return;
+    const { error } = await supabase.from('events').delete().eq('id', id);
+    if (error) {
+      notify('Error', error.message);
+    } else {
+      router.back();
+    }
   }
 
   return (

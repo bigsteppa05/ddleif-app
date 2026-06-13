@@ -1,6 +1,9 @@
-import { Tabs } from 'expo-router';
+import { View } from 'react-native';
+import { Tabs, Slot } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '@/constants/colors';
+import { useIsDesktopWeb } from '@/components/web/kit';
+import { WebShell } from '@/components/web/WebShell';
 
 type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
 
@@ -15,6 +18,17 @@ function TabIcon({ name, focused }: { name: IoniconName; focused: boolean }) {
 }
 
 export default function TabsLayout() {
+  const isDesktop = useIsDesktopWeb();
+
+  if (isDesktop) {
+    // Desktop web: sidebar shell; each screen renders inside the content column.
+    return (
+      <WebShell>
+        <Slot />
+      </WebShell>
+    );
+  }
+
   return (
     <Tabs
       screenOptions={{
@@ -58,7 +72,6 @@ export default function TabsLayout() {
           ),
         }}
       />
-      {/* Hide legacy tabs from tab bar */}
       <Tabs.Screen name="bookings" options={{ href: null }} />
     </Tabs>
   );
