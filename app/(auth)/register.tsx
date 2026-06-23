@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect } from 'react';
+import { useRef, useState, useEffect, type ReactElement } from 'react';
 import {
   View,
   Text,
@@ -29,6 +29,19 @@ import { notify } from '@/lib/ui';
 import { AuthShell, AuthHeading, LimeLink, WBtn, FW, useIsDesktopWeb } from '@/components/web/kit';
 
 const TOTAL_STEPS = 4;
+
+// react-native-web focus guard: on web, a tap on a child input bubbles up to the
+// TouchableWithoutFeedback, whose Keyboard.dismiss() then blurs the just-focused
+// field — making inputs (e.g. the password) impossible to type into. Tap-to-dismiss
+// is a native-only affordance, so on web we render the form without the wrapper.
+function TapToDismiss({ children }: { children: ReactElement }) {
+  if (Platform.OS === 'web') return children;
+  return (
+    <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+      {children}
+    </TouchableWithoutFeedback>
+  );
+}
 
 export default function RegisterScreen() {
   const router = useRouter();
@@ -64,6 +77,8 @@ export default function RegisterScreen() {
   // Password
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [pwTouched, setPwTouched] = useState(false);
+  // Whether the chosen password has been attached to the account (see savePassword).
+  const [pwSaved, setPwSaved] = useState(false);
 
   // Username availability
   const [usernameChecking, setUsernameChecking] = useState(false);
@@ -252,6 +267,20 @@ export default function RegisterScreen() {
     }
   }
 
+  // Attach the password chosen in step 1 to the account. The user already has a
+  // session from the OTP verify, so this just sets a password — enabling password
+  // login later. Returns false (instead of throwing) so callers can surface the
+  // failure rather than letting the account slip onto the OTP-only path.
+  async function savePassword(): Promise<boolean> {
+    const { error } = await supabase.auth.updateUser({ password });
+    if (error) {
+      console.warn('Could not set password:', error.message);
+      return false;
+    }
+    setPwSaved(true);
+    return true;
+  }
+
   // ── Submit ────────────────────────────────────────────────────────────────
   async function handleFinish() {
     setLoading(true);
@@ -263,6 +292,18 @@ export default function RegisterScreen() {
       setToastMsg('Session expired. Please start again.');
       setTimeout(() => router.replace('/(auth)/register'), 2000);
       return;
+    }
+
+    // Guarantee the password is attached before completing. If the post-verify
+    // attempt failed (e.g. a network blip), retry here and block completion on
+    // failure — the account must never land in a passwordless state.
+    if (!pwSaved) {
+      const ok = await savePassword();
+      if (!ok) {
+        setLoading(false);
+        setToastMsg("We couldn't set your password. Check your connection and try again.");
+        return;
+      }
     }
 
     const userId = user.id;
@@ -373,10 +414,10 @@ export default function RegisterScreen() {
         } else {
           setOtpError('');
           setOtpVerified(true);
-          // Persist the password collected in step 1 — enables password login
-          supabase.auth.updateUser({ password }).then(({ error: pwError }) => {
-            if (pwError) console.warn('Could not set password:', pwError.message);
-          });
+          // Best-effort: attach the password now so the common path is fast.
+          // handleFinish re-checks and blocks completion if this didn't land, so
+          // registration can never finish without a password set.
+          void savePassword();
           // Auto-advance to the profile step once verified
           setTimeout(() => setStep((s) => (s === 1 ? 2 : s)), 700);
         }
@@ -467,7 +508,7 @@ export default function RegisterScreen() {
   }
 
   return (
-    <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+    <TapToDismiss>
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -553,7 +594,7 @@ export default function RegisterScreen() {
           </Animated.View>
         )}
       </KeyboardAvoidingView>
-    </TouchableWithoutFeedback>
+    </TapToDismiss>
   );
 }
 
