@@ -10,6 +10,7 @@ import {
   ActivityIndicator,
   Linking,
   Share,
+  Platform,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -18,8 +19,16 @@ import Animated, { useSharedValue, useAnimatedStyle, withSpring } from 'react-na
 import { Colors } from '@/constants/colors';
 import type { Event } from '@/lib/mockData';
 import { getDisplayEvent, formatDateTime } from '@/lib/events';
-import { supabase, checkExistingBooking, getUserProfile } from '@/lib/supabase';
+import {
+  supabase,
+  checkExistingBooking,
+  cancelBooking,
+  getUserProfile,
+  getEventParticipants,
+  type EventParticipant,
+} from '@/lib/supabase';
 import { notify } from '@/lib/ui';
+import { notifyCreditsChanged } from '@/lib/credits';
 import { FW, WBtn, WGhostBtn, WTag, useIsDesktopWeb } from '@/components/web/kit';
 import { WebShell } from '@/components/web/WebShell';
 
@@ -35,9 +44,12 @@ export default function EventDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [userId, setUserId] = useState<string | null>(null);
   const [isBooked, setIsBooked] = useState(false);
+  const [bookingId, setBookingId] = useState<string | null>(null);
   const [bookingLoading, setBookingLoading] = useState(false);
+  const [cancelLoading, setCancelLoading] = useState(false);
   const [credits, setCredits] = useState<number | null>(null);
   const [bookError, setBookError] = useState('');
+  const [participants, setParticipants] = useState<EventParticipant[]>([]);
 
   useEffect(() => {
     if (!isDesktop) return;
@@ -58,8 +70,9 @@ export default function EventDetailScreen() {
       if (user) {
         setUserId(user.id);
         if (!isMockEvent && data) {
-          const already = await checkExistingBooking(user.id, id);
-          setIsBooked(already);
+          const existingId = await checkExistingBooking(user.id, id);
+          setIsBooked(existingId !== null);
+          setBookingId(existingId);
         }
       }
 
@@ -67,6 +80,18 @@ export default function EventDetailScreen() {
     }
     load();
   }, [id]);
+
+  useEffect(() => {
+    if (isMockEvent) return;
+    getEventParticipants(id).then(setParticipants);
+  }, [id]);
+
+  function goToParticipants() {
+    router.push({
+      pathname: '/event/participants',
+      params: { eventId: id, title: event?.title ?? '' },
+    });
+  }
 
   const bookScale = useSharedValue(1);
   const bookAnimStyle = useAnimatedStyle(() => ({
@@ -103,7 +128,9 @@ export default function EventDetailScreen() {
 
     const updated = await getDisplayEvent(id);
     if (updated) setEvent(updated);
+    getEventParticipants(id).then(setParticipants);
     setIsBooked(true);
+    if (rpcData?.booking_id) setBookingId(rpcData.booking_id);
     setBookingLoading(false);
 
     if (rpcData?.booking_id) {
@@ -124,6 +151,70 @@ export default function EventDetailScreen() {
     } else {
       notify('Booked!', 'Your spot is confirmed. Check My Bookings.');
     }
+  }
+
+  function viewTicket() {
+    if (!bookingId) return;
+    router.push({ pathname: '/booking/ticket', params: { bookingId, eventId: id } });
+  }
+
+  // Full refund only when cancelling >12h before start (mirrors the server-side gate).
+  function refundEligible(): boolean {
+    if (!event || event.is_free) return false;
+    const start = event.rawDate ? new Date(event.rawDate).getTime() : NaN;
+    if (Number.isNaN(start)) return false;
+    return Date.now() < start - 12 * 60 * 60 * 1000;
+  }
+
+  async function doCancel() {
+    if (!userId || !bookingId) return;
+    setCancelLoading(true);
+    try {
+      const { refunded_credits } = await cancelBooking(bookingId, userId);
+      setIsBooked(false);
+      setBookingId(null);
+      const updated = await getDisplayEvent(id);
+      if (updated) setEvent(updated);
+      getEventParticipants(id).then(setParticipants);
+      // A refund moved the balance — refresh the sidebar/profile credit card live,
+      // matching the top-up flow (no refund within 12h means nothing to broadcast).
+      if (refunded_credits > 0) notifyCreditsChanged();
+      notify(
+        'Booking cancelled',
+        refunded_credits > 0
+          ? `${refunded_credits} credits have been returned to your balance.`
+          : 'Your slot has been released. No refund applies within 12 hours of the event.'
+      );
+    } catch (e: any) {
+      const msg = e?.message ?? '';
+      notify(
+        'Could not cancel',
+        msg.includes('already_checked_in')
+          ? "You're already checked in for this event."
+          : 'Something went wrong cancelling your booking. Please try again.'
+      );
+    } finally {
+      setCancelLoading(false);
+    }
+  }
+
+  function handleCancel() {
+    const refundMsg = event?.is_free
+      ? 'Your slot will be released.'
+      : refundEligible()
+      ? `You'll be refunded ${event?.cost_in_credits} credits.`
+      : 'No refund applies — this event starts within 12 hours.';
+
+    if (Platform.OS === 'web') {
+      if (typeof window === 'undefined' || window.confirm(`Cancel this booking? ${refundMsg}`)) {
+        doCancel();
+      }
+      return;
+    }
+    Alert.alert('Cancel booking?', refundMsg, [
+      { text: 'Keep booking', style: 'cancel' },
+      { text: 'Cancel booking', style: 'destructive', onPress: doCancel },
+    ]);
   }
 
   function handleShare() {
@@ -297,7 +388,26 @@ export default function EventDetailScreen() {
                 </View>
               )}
             </View>
-            {isFull && !isBooked ? (
+            {isBooked && bookingId ? (
+              <View style={{ gap: 12 }}>
+                <WBtn
+                  label="View Ticket"
+                  icon="qr-code-outline"
+                  size="lg"
+                  full
+                  onPress={viewTicket}
+                />
+                <TouchableOpacity
+                  onPress={handleCancel}
+                  disabled={cancelLoading}
+                  style={{ alignItems: 'center', paddingVertical: 6 }}
+                >
+                  <Text style={{ color: FW.error, fontSize: 13.5, fontWeight: '700' }}>
+                    {cancelLoading ? 'Cancelling…' : 'Cancel booking'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            ) : isFull && !isBooked ? (
               <View style={{
                 alignItems: 'center', justifyContent: 'center',
                 backgroundColor: FW.surfaceEl, borderRadius: 999, paddingVertical: 15,
@@ -353,6 +463,12 @@ export default function EventDetailScreen() {
 
         {/* Title */}
         <View style={styles.titleSection}>
+          {isBooked && (
+            <View style={styles.bookedBadge}>
+              <Ionicons name="checkmark-circle" size={13} color={Colors.primary} />
+              <Text style={styles.bookedBadgeText}>Booked</Text>
+            </View>
+          )}
           <Text style={styles.title}>{event.title}</Text>
         </View>
 
@@ -406,6 +522,35 @@ export default function EventDetailScreen() {
           </Text>
         </View>
 
+        {/* Participants preview */}
+        {event.slots_booked > 0 && (
+          <TouchableOpacity
+            style={[styles.card, styles.participantsPreview]}
+            activeOpacity={0.8}
+            onPress={goToParticipants}
+          >
+            <View style={styles.avatarStack}>
+              {participants.slice(0, 5).map((p, i) => (
+                <View key={i} style={[styles.stackAvatar, { marginLeft: i ? -12 : 0, zIndex: 5 - i }]}>
+                  {p.avatar_url ? (
+                    <Image source={{ uri: p.avatar_url }} style={styles.stackImg} />
+                  ) : p.is_private ? (
+                    <Ionicons name="lock-closed" size={13} color={Colors.textMuted} />
+                  ) : (
+                    <Text style={styles.stackInitial}>
+                      {(p.is_self ? 'Y' : p.name || p.username || '?').charAt(0).toUpperCase()}
+                    </Text>
+                  )}
+                </View>
+              ))}
+            </View>
+            <Text style={styles.goingText}>{event.slots_booked} going</Text>
+            <View style={{ flex: 1 }} />
+            <Text style={styles.seeAll}>See all</Text>
+            <Ionicons name="chevron-forward" size={16} color={Colors.primary} />
+          </TouchableOpacity>
+        )}
+
         {/* Description */}
         <View style={styles.card}>
           <View style={styles.descHeader}>
@@ -418,31 +563,67 @@ export default function EventDetailScreen() {
 
       {/* Fixed bottom bar */}
       <View style={[styles.bottomBar, { paddingBottom: insets.bottom + 12 }]}>
-        <View>
-          <Text style={styles.priceLabel}>Price per person</Text>
-          <Text style={styles.priceValue}>
-            {event.is_free ? 'Free' : `${event.cost_in_credits} Credits`}
-          </Text>
-        </View>
-        <AnimatedTouchable
-          style={[
-            styles.bookButton,
-            bookAnimStyle,
-            buttonDisabled && styles.bookButtonDisabled,
-            isFull && styles.bookButtonFull,
-          ]}
-          activeOpacity={1}
-          onPressIn={() => { if (!buttonDisabled) bookScale.value = withSpring(0.96, { duration: 120 }); }}
-          onPressOut={() => { bookScale.value = withSpring(1, { duration: 150 }); }}
-          onPress={handleBook}
-          disabled={buttonDisabled}
-        >
-          {bookingLoading ? (
-            <ActivityIndicator color={Colors.background} />
-          ) : (
-            <Text style={styles.bookButtonText}>{getButtonLabel()}</Text>
-          )}
-        </AnimatedTouchable>
+        {isBooked && bookingId ? (
+          <View style={styles.bookedActions}>
+            {/* Persistent ticket access — reachable on every visit, not just post-booking */}
+            <TouchableOpacity
+              style={styles.ticketButton}
+              activeOpacity={0.85}
+              onPress={viewTicket}
+            >
+              <Ionicons name="qr-code-outline" size={19} color={Colors.primary} />
+              <Text style={styles.ticketButtonText}>View Entry Ticket</Text>
+            </TouchableOpacity>
+            <View style={styles.bookedPriceRow}>
+              <View>
+                <Text style={styles.priceLabel}>Price per person</Text>
+                <Text style={styles.priceValue}>
+                  {event.is_free ? 'Free' : `${event.cost_in_credits} Credits`}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={[styles.cancelButton, cancelLoading && styles.bookButtonDisabled]}
+                activeOpacity={0.85}
+                onPress={handleCancel}
+                disabled={cancelLoading}
+              >
+                {cancelLoading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.cancelButtonText}>Cancel Booking</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        ) : (
+          <>
+            <View>
+              <Text style={styles.priceLabel}>Price per person</Text>
+              <Text style={styles.priceValue}>
+                {event.is_free ? 'Free' : `${event.cost_in_credits} Credits`}
+              </Text>
+            </View>
+            <AnimatedTouchable
+              style={[
+                styles.bookButton,
+                bookAnimStyle,
+                buttonDisabled && styles.bookButtonDisabled,
+                isFull && styles.bookButtonFull,
+              ]}
+              activeOpacity={1}
+              onPressIn={() => { if (!buttonDisabled) bookScale.value = withSpring(0.96, { duration: 120 }); }}
+              onPressOut={() => { bookScale.value = withSpring(1, { duration: 150 }); }}
+              onPress={handleBook}
+              disabled={buttonDisabled}
+            >
+              {bookingLoading ? (
+                <ActivityIndicator color={Colors.background} />
+              ) : (
+                <Text style={styles.bookButtonText}>{getButtonLabel()}</Text>
+              )}
+            </AnimatedTouchable>
+          </>
+        )}
       </View>
     </View>
   );
@@ -564,6 +745,24 @@ const styles = StyleSheet.create({
     paddingTop: 20,
     paddingBottom: 8,
   },
+  bookedBadge: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: `${Colors.primary}1F`,
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    marginBottom: 10,
+  },
+  bookedBadgeText: {
+    color: Colors.primary,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
+  },
   title: {
     color: Colors.primary,
     fontSize: 28,
@@ -624,6 +823,30 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     fontSize: 13,
   },
+  participantsPreview: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  avatarStack: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  stackAvatar: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 2,
+    borderColor: Colors.surface,
+    backgroundColor: Colors.surfaceElevated,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  stackImg: { width: '100%', height: '100%' },
+  stackInitial: { color: Colors.textSecondary, fontSize: 13, fontWeight: '800' },
+  goingText: { color: Colors.textPrimary, fontSize: 14, fontWeight: '700' },
+  seeAll: { color: Colors.primary, fontSize: 13.5, fontWeight: '700' },
   descHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -665,6 +888,44 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     minWidth: 140,
     alignItems: 'center',
+  },
+  bookedActions: {
+    width: '100%',
+    gap: 12,
+  },
+  ticketButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 9,
+    borderWidth: 1.5,
+    borderColor: Colors.primary,
+    borderRadius: 28,
+    paddingVertical: 14,
+  },
+  ticketButtonText: {
+    color: Colors.primary,
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  bookedPriceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  cancelButton: {
+    backgroundColor: Colors.error,
+    borderRadius: 28,
+    paddingHorizontal: 32,
+    paddingVertical: 15,
+    minWidth: 150,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cancelButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '800',
   },
   bookButtonDisabled: {
     opacity: 0.5,

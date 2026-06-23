@@ -252,7 +252,9 @@ export async function getUserPayments(userId: string): Promise<Payment[]> {
   return (data ?? []) as Payment[];
 }
 
-export async function checkExistingBooking(userId: string, eventId: string): Promise<boolean> {
+// Returns the active booking's id for this user+event, or null if none.
+// Callers use the id to deep-link to the entry ticket; a falsy result means "not booked".
+export async function checkExistingBooking(userId: string, eventId: string): Promise<string | null> {
   const { data } = await supabase
     .from('bookings')
     .select('id')
@@ -260,7 +262,39 @@ export async function checkExistingBooking(userId: string, eventId: string): Pro
     .eq('event_id', eventId)
     .in('status', ['confirmed', 'checked_in'])
     .maybeSingle();
-  return data !== null;
+  return data?.id ?? null;
+}
+
+// Cancels the user's own confirmed booking. Server enforces ownership + the 12h
+// refund policy; returns how many credits were actually refunded (0 within 12h).
+export async function cancelBooking(
+  bookingId: string,
+  userId: string
+): Promise<{ refunded_credits: number }> {
+  const { data, error } = await supabase.rpc('cancel_booking', {
+    p_booking_id: bookingId,
+    p_user_id: userId,
+  });
+  if (error) throw error;
+  return (data ?? { refunded_credits: 0 }) as { refunded_credits: number };
+}
+
+export type EventParticipant = {
+  name: string | null;
+  username: string | null;
+  avatar_url: string | null;
+  is_private: boolean;
+  is_self: boolean;
+};
+
+// Participants of an event. Server honors profiles.visibility — private users come
+// back anonymized (null name/avatar, is_private=true) but are still included in the list.
+export async function getEventParticipants(eventId: string): Promise<EventParticipant[]> {
+  const { data, error } = await supabase.rpc('get_event_participants', {
+    p_event_id: eventId,
+  });
+  if (error) return [];
+  return (data ?? []) as EventParticipant[];
 }
 
 export async function checkIsAdmin(): Promise<boolean> {
