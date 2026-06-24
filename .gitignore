@@ -41,3 +41,6 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# local verification screenshots (test artifacts, not app source)
+reports/*.png
