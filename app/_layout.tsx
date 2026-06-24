@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Platform, View, ActivityIndicator } from 'react-native';
 import { Stack, useRouter, usePathname } from 'expo-router';
-import * as Notifications from 'expo-notifications';
 import { supabase } from '@/lib/supabase';
-import { setupNotifications } from '@/lib/notifications';
+import { setupNotifications, addNotificationResponseListener } from '@/lib/notifications';
 import { Colors } from '@/constants/colors';
 import { DEV_BYPASS_AUTH } from '@/constants/dev';
 import { CookieConsent } from '@/components/CookieConsent';
@@ -14,8 +13,7 @@ export default function RootLayout() {
   const pathnameRef = useRef(pathname);
   // null = still checking the stored session
   const [isLoggedIn, setIsLoggedIn] = useState<boolean | null>(null);
-  const notificationListener = useRef<Notifications.EventSubscription | null>(null);
-  const responseListener = useRef<Notifications.EventSubscription | null>(null);
+  const responseListener = useRef<{ remove: () => void } | null>(null);
 
   useEffect(() => { pathnameRef.current = pathname; }, [pathname]);
 
@@ -24,18 +22,16 @@ export default function RootLayout() {
 
     setupNotifications();
 
-    responseListener.current = Notifications.addNotificationResponseReceivedListener((response) => {
-      const data = response.notification.request.content.data;
+    addNotificationResponseListener((data) => {
       if (data?.type === 'event_reminder' && data?.bookingId) {
         router.push({
           pathname: '/booking/ticket',
           params: { bookingId: data.bookingId as string, eventId: '' },
         });
       }
-    });
+    }).then((sub) => { responseListener.current = sub; });
 
     return () => {
-      notificationListener.current?.remove();
       responseListener.current?.remove();
     };
   }, []);

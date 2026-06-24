@@ -6,7 +6,7 @@ import {
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import * as Notifications from 'expo-notifications';
+import { getNotificationPermissionStatus, requestNotificationPermission } from '@/lib/notifications';
 import { Colors } from '@/constants/colors';
 import { KES_PER_CREDIT } from '@/constants/payments';
 import { supabase, getUserProfile, checkIsAdmin, updateProfile, type Profile } from '@/lib/supabase';
@@ -190,7 +190,7 @@ export default function ProfileScreen() {
       setProfile(data);
       setIsAdmin(adminFlag);
 
-      const { status } = await Notifications.getPermissionsAsync();
+      const status = await getNotificationPermissionStatus();
       setNotifications(status === 'granted' ? (data?.notifications_enabled ?? false) : false);
     } finally {
       setLoading(false);
@@ -220,13 +220,8 @@ export default function ProfileScreen() {
   async function handleNotificationToggle(value: boolean) {
     if (!userId) return;
     if (value) {
-      const { status } = await Notifications.getPermissionsAsync();
-      let finalStatus = status;
-      if (status !== 'granted') {
-        const { status: requested } = await Notifications.requestPermissionsAsync();
-        finalStatus = requested;
-      }
-      if (finalStatus !== 'granted') {
+      const granted = await requestNotificationPermission();
+      if (!granted) {
         Alert.alert(
           'Notifications Blocked',
           'Enable notifications for fitXball in your device settings.',

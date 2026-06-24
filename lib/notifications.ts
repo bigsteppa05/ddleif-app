@@ -1,7 +1,26 @@
-import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
+import Constants from 'expo-constants';
+
+// Expo Go on Android (SDK 53+) stripped the native notifications module, so simply
+// *importing* expo-notifications there logs a hard error. fitXball uses only local
+// notifications, so we lazy-load the module and skip it entirely in Expo Go on
+// Android — the import (and its error) never happens. iOS Expo Go and any
+// development/standalone build keep full functionality.
+const isExpoGoAndroid = Constants.appOwnership === 'expo' && Platform.OS === 'android';
+
+type NotificationsModule = typeof import('expo-notifications');
+
+async function loadNotifications(): Promise<NotificationsModule | null> {
+  if (isExpoGoAndroid) return null;
+  return import('expo-notifications');
+}
+
+export type NotificationData = { type?: string; bookingId?: string; [key: string]: unknown };
 
 export async function setupNotifications(): Promise<void> {
+  const Notifications = await loadNotifications();
+  if (!Notifications) return;
+
   // Foreground handler — show banner + sound even when app is open
   Notifications.setNotificationHandler({
     handleNotification: async () => ({
@@ -24,7 +43,29 @@ export async function setupNotifications(): Promise<void> {
   }
 }
 
+// Routes the "tap a notification" callback through the lazy module so callers
+// (e.g. the root layout) never import expo-notifications directly.
+export async function addNotificationResponseListener(
+  onTap: (data: NotificationData) => void
+): Promise<{ remove: () => void } | null> {
+  const Notifications = await loadNotifications();
+  if (!Notifications) return null;
+  return Notifications.addNotificationResponseReceivedListener((response) => {
+    onTap(response.notification.request.content.data as NotificationData);
+  });
+}
+
+// Current permission status, or null when notifications are unavailable.
+export async function getNotificationPermissionStatus(): Promise<string | null> {
+  const Notifications = await loadNotifications();
+  if (!Notifications) return null;
+  const { status } = await Notifications.getPermissionsAsync();
+  return status;
+}
+
 export async function requestNotificationPermission(): Promise<boolean> {
+  const Notifications = await loadNotifications();
+  if (!Notifications) return false;
   const { status: existing } = await Notifications.getPermissionsAsync();
   if (existing === 'granted') return true;
   const { status } = await Notifications.requestPermissionsAsync();
@@ -33,6 +74,8 @@ export async function requestNotificationPermission(): Promise<boolean> {
 
 // Immediate confirmation notification — fired right after booking succeeds
 export async function scheduleBookingConfirmation(eventTitle: string): Promise<void> {
+  const Notifications = await loadNotifications();
+  if (!Notifications) return;
   const granted = await requestNotificationPermission();
   if (!granted) return;
 
@@ -55,6 +98,8 @@ export async function scheduleEventReminder(
   isoDate: string,
   time: string
 ): Promise<string | null> {
+  const Notifications = await loadNotifications();
+  if (!Notifications) return null;
   const granted = await requestNotificationPermission();
   if (!granted) return null;
 
@@ -83,6 +128,8 @@ export async function scheduleEventReminder(
 }
 
 export async function cancelEventReminder(bookingId: string): Promise<void> {
+  const Notifications = await loadNotifications();
+  if (!Notifications) return;
   await Notifications.cancelScheduledNotificationAsync(`reminder-${bookingId}`);
 }
 
