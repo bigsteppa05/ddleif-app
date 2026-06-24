@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import {
   View,
   Text,
+  Image,
   Pressable,
   StyleSheet,
   useWindowDimensions,
@@ -238,6 +239,7 @@ export function Sidebar({ admin, profileName, profileUsername, credits, onSignOu
   return (
     <View style={kit.sidebar}>
       <Pressable style={kit.sidebarBrand} onPress={() => router.push(admin ? '/admin' : '/' as any)}>
+        <Image source={require('../../assets/logo-mark.png')} style={kit.logoMark} resizeMode="contain" />
         <Text style={kit.wordmark}>fitXball</Text>
         {admin && <WTag label="Admin" tone="limeSoft" />}
       </Pressable>
@@ -411,6 +413,7 @@ const kit = StyleSheet.create({
   sidebarBrand: {
     paddingHorizontal: 14, paddingBottom: 28, flexDirection: 'row', alignItems: 'center', gap: 10,
   },
+  logoMark: { width: 30, height: 30 },
   wordmark: { fontSize: 26, fontWeight: '900', letterSpacing: -1, color: FW.primary, lineHeight: 26 },
   navItem: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
