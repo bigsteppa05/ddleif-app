@@ -45,6 +45,14 @@ export function normalizeEvent(e: SupabaseEvent): DisplayEvent {
     duration: e.duration ?? '',
     location: e.location,
     locationFull: e.location_full ?? e.location,
+    // Prefer the explicit columns; fall back to the legacy overloaded location_full
+    // (URL → maps link, anything else → details) for rows not yet re-saved.
+    locationDetails:
+      e.location_details ??
+      (e.location_full && !e.location_full.startsWith('http') ? e.location_full : undefined),
+    mapsUrl:
+      e.maps_url ??
+      (e.location_full && e.location_full.startsWith('http') ? e.location_full : undefined),
     cost_in_credits: e.cost_in_credits,
     is_free: e.is_free,
     slots_available: e.slots_available,

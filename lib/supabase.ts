@@ -60,6 +60,8 @@ export type Event = {
   duration: string;
   location: string;
   location_full: string;
+  location_details: string | null;
+  maps_url: string | null;
   mode: string;
   cost_in_credits: number;
   slots_available: number;

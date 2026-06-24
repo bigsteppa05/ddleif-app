@@ -8,6 +8,8 @@ export type Event = {
   duration: string;
   location: string;
   locationFull: string;
+  locationDetails?: string;
+  mapsUrl?: string;
   cost_in_credits: number;
   is_free: boolean;
   slots_available: number;

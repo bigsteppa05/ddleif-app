@@ -48,7 +48,8 @@ export type FormState = {
   date: string;
   time: string;
   location: string;
-  location_full: string;
+  location_details: string;
+  maps_url: string;
   duration: string;
   mode: string;
   cost_in_credits: string;
@@ -65,7 +66,8 @@ export const EMPTY_FORM: FormState = {
   date: '',
   time: '',
   location: '',
-  location_full: '',
+  location_details: '',
+  maps_url: '',
   duration: '',
   mode: '',
   cost_in_credits: '0',
@@ -113,7 +115,8 @@ export default function AddEventScreen() {
       date: form.date,
       time: /^\d{2}:\d{2}$/.test(form.time) ? form.time : null,
       location: form.location.trim(),
-      location_full: form.location_full.trim(),
+      location_details: form.location_details.trim() || null,
+      maps_url: form.maps_url.trim() || null,
       duration: form.duration.trim(),
       mode: form.mode.trim(),
       cost_in_credits: parseInt(form.cost_in_credits, 10) || 0,
@@ -279,13 +282,21 @@ export function EventForm({
       {/* Location */}
       <Text style={formStyles.sectionLabel}>Where</Text>
       <View style={formStyles.card}>
-        <Field label="Location Name" value={form.location} onChangeText={(v) => set('location', v)} placeholder="City Park, Nairobi" padded />
+        <Field label="Location Name" value={form.location} onChangeText={(v) => set('location', v)} placeholder="SOCCERBASE" padded />
         <View style={formStyles.divider} />
         <Field
-          label="Maps Link"
-          value={form.location_full}
-          onChangeText={(v) => set('location_full', v)}
-          placeholder="Paste Google Maps or Apple Maps link"
+          label="Floor / Building / Court (optional)"
+          value={form.location_details}
+          onChangeText={(v) => set('location_details', v)}
+          placeholder="Base Two · Court 2 · 28x15 m"
+          padded
+        />
+        <View style={formStyles.divider} />
+        <Field
+          label="Google Maps Link"
+          value={form.maps_url}
+          onChangeText={(v) => set('maps_url', v)}
+          placeholder="Paste the Google Maps link"
           keyboardType="url"
           padded
         />

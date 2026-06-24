@@ -29,6 +29,8 @@ import {
 } from '@/lib/supabase';
 import { notify } from '@/lib/ui';
 import { notifyCreditsChanged } from '@/lib/credits';
+import { openGoogleMaps, hasMapsChooser, type MapsTarget } from '@/lib/maps';
+import { MapsChooser } from '@/components/MapsChooser';
 import { FW, WBtn, WGhostBtn, WTag, useIsDesktopWeb } from '@/components/web/kit';
 import { WebShell } from '@/components/web/WebShell';
 
@@ -50,6 +52,7 @@ export default function EventDetailScreen() {
   const [credits, setCredits] = useState<number | null>(null);
   const [bookError, setBookError] = useState('');
   const [participants, setParticipants] = useState<EventParticipant[]>([]);
+  const [mapsChooserVisible, setMapsChooserVisible] = useState(false);
 
   useEffect(() => {
     if (!isDesktop) return;
@@ -217,6 +220,13 @@ export default function EventDetailScreen() {
     ]);
   }
 
+  // Native: let the user pick Apple Maps / Google Maps / Waze. Web: open Google.
+  function handleDirections() {
+    if (!event) return;
+    if (hasMapsChooser) setMapsChooserVisible(true);
+    else openGoogleMaps({ name: event.location, mapsUrl: event.mapsUrl });
+  }
+
   function handleShare() {
     if (!event) return;
     Share.share({
@@ -308,13 +318,16 @@ export default function EventDetailScreen() {
                 borderRadius: 16, borderWidth: 1, borderColor: FW.border, backgroundColor: FW.surface,
                 paddingVertical: 14, paddingHorizontal: 18, flexDirection: 'row', alignItems: 'center', gap: 10,
               }}>
-                <Ionicons name="location-outline" size={17} color={FW.primary} />
-                <Text style={{ fontSize: 14, fontWeight: '600', color: FW.text, flex: 1 }}>
-                  {event.locationFull || event.location}
-                </Text>
+                <Ionicons name="location-outline" size={18} color={FW.primary} />
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={{ fontSize: 15, fontWeight: '700', color: FW.text }}>{event.location}</Text>
+                  {event.locationDetails ? (
+                    <Text style={{ fontSize: 13, color: FW.sec, marginTop: 2 }}>{event.locationDetails}</Text>
+                  ) : null}
+                </View>
                 <Text
                   style={{ fontSize: 13.5, fontWeight: '700', color: FW.primary }}
-                  onPress={() => Linking.openURL(`https://maps.google.com/?q=${encodeURIComponent(event.locationFull || event.location)}`)}
+                  onPress={handleDirections}
                 >
                   Get directions
                 </Text>
@@ -491,12 +504,10 @@ export default function EventDetailScreen() {
             </>
           ) : null}
           <View style={styles.cardDivider} />
-          <InfoRow
-            icon="location-outline"
-            label="Location"
-            primary={event.location}
-            secondary={event.locationFull?.startsWith('http') ? undefined : event.locationFull}
-            mapsUrl={event.locationFull?.startsWith('http') ? event.locationFull : undefined}
+          <LocationRow
+            name={event.location}
+            details={event.locationDetails}
+            onDirections={handleDirections}
           />
           <View style={styles.cardDivider} />
           <InfoRow
@@ -625,7 +636,35 @@ export default function EventDetailScreen() {
           </>
         )}
       </View>
+      <MapsChooser
+        visible={mapsChooserVisible}
+        onClose={() => setMapsChooserVisible(false)}
+        target={{ name: event.location, mapsUrl: event.mapsUrl }}
+      />
     </View>
+  );
+}
+
+function LocationRow({
+  name,
+  details,
+  onDirections,
+}: {
+  name: string;
+  details?: string;
+  onDirections: () => void;
+}) {
+  return (
+    <TouchableOpacity style={infoStyles.row} activeOpacity={0.7} onPress={onDirections}>
+      <Ionicons name="location-outline" size={22} color={Colors.primary} style={infoStyles.icon} />
+      <View style={infoStyles.text}>
+        <Text style={infoStyles.label}>Location</Text>
+        <Text style={infoStyles.primary}>{name}</Text>
+        {details ? <Text style={infoStyles.secondary}>{details}</Text> : null}
+        <Text style={infoStyles.mapsLink}>Get directions →</Text>
+      </View>
+      <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} style={{ alignSelf: 'center' }} />
+    </TouchableOpacity>
   );
 }
 
