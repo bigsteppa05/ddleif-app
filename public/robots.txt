@@ -1,0 +1,12 @@
+User-agent: *
+Allow: /
+
+Disallow: /admin/
+Disallow: /profile/
+Disallow: /credits/
+Disallow: /booking/
+Disallow: /(auth)/
+Disallow: /login/
+Disallow: /register/
+
+Sitemap: https://fitxball.com/sitemap.xml

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Baseline sitemap. Only lists URLs that resolve to real, indexable content today.
+  Sport, venue and event pages get added here once they exist as their own routes
+  (after the web.output: static migration). Prefer generating this file at build
+  time from Supabase so live events stay in sync — see scripts/ (to be added).
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://fitxball.com/</loc>
+    <changefreq>daily</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>

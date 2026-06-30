@@ -1,5 +1,11 @@
 {
   "buildCommand": "npx expo export --platform web",
   "outputDirectory": "dist",
-  "rewrites": [{ "source": "/(.*)", "destination": "/" }]
+  "cleanUrls": true,
+  "trailingSlash": false,
+  "rewrites": [
+    { "source": "/event/:id", "destination": "/event/[id]" },
+    { "source": "/legal/:page", "destination": "/legal/[page]" },
+    { "source": "/admin/edit-event/:id", "destination": "/admin/edit-event/[id]" }
+  ]
 }

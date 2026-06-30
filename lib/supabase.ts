@@ -7,10 +7,13 @@ export const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!;
 
 const ADMIN_EMAIL = process.env.EXPO_PUBLIC_ADMIN_EMAIL ?? '';
 
+// Guarded so the client can be constructed during web static pre-rendering
+// (Node has no `localStorage`). A pre-rendered page has no session anyway.
+const hasLocalStorage = () => typeof localStorage !== 'undefined';
 const webStorageAdapter = {
-  getItem: (key: string) => Promise.resolve(localStorage.getItem(key)),
-  setItem: (key: string, value: string) => { localStorage.setItem(key, value); return Promise.resolve(); },
-  removeItem: (key: string) => { localStorage.removeItem(key); return Promise.resolve(); },
+  getItem: (key: string) => Promise.resolve(hasLocalStorage() ? localStorage.getItem(key) : null),
+  setItem: (key: string, value: string) => { if (hasLocalStorage()) localStorage.setItem(key, value); return Promise.resolve(); },
+  removeItem: (key: string) => { if (hasLocalStorage()) localStorage.removeItem(key); return Promise.resolve(); },
 };
 
 const nativeStorageAdapter = {
