@@ -35,6 +35,11 @@ const PAYMENT_METHODS = [
   { id: 'card', label: 'Card', icon: 'card-outline' },
 ] as const;
 
+// Payments are temporarily disabled. While false, the top-up screen renders a
+// "coming soon" state and the M-Pesa flow below is unreachable. Flip to true to
+// restore top-ups — no other change needed.
+const PAYMENTS_ENABLED = false;
+
 export default function TopUpScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -137,6 +142,63 @@ export default function TopUpScreen() {
     : canPay ? `Pay KES ${totalKes}` : 'Select an amount';
 
   const isDesktop = useIsDesktopWeb();
+
+  // Chokepoint block: while payments are disabled, no top-up UI is shown on any
+  // platform or entry point, so the mpesa-stk-push function can't be reached.
+  if (!PAYMENTS_ENABLED) {
+    if (isDesktop) {
+      return (
+        <WebShell>
+          <TouchableOpacity
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 20 }}
+            onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)/profile'))}
+          >
+            <Ionicons name="arrow-back" size={16} color={FW.sec} />
+            <Text style={{ fontSize: 14, fontWeight: '600', color: FW.sec }}>Profile</Text>
+          </TouchableOpacity>
+          <View style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 90, gap: 16 }}>
+            <View style={{
+              width: 64, height: 64, borderRadius: 18, backgroundColor: FW.surface,
+              borderWidth: 1, borderColor: FW.border, alignItems: 'center', justifyContent: 'center',
+            }}>
+              <Ionicons name="time-outline" size={30} color={FW.primary} />
+            </View>
+            <Text style={{ fontSize: 22, fontWeight: '800', color: FW.text }}>Top-ups are coming soon</Text>
+            <Text style={{ fontSize: 14.5, color: FW.sec, textAlign: 'center', maxWidth: 380, lineHeight: 21 }}>
+              Buying credits isn’t available just yet. We’re putting the finishing touches on
+              payments — check back shortly.
+            </Text>
+          </View>
+        </WebShell>
+      );
+    }
+    return (
+      <View style={{ flex: 1, backgroundColor: Colors.background }}>
+        <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
+          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+            <Ionicons name="arrow-back" size={20} color={Colors.textPrimary} />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Top Up Credits</Text>
+          <View style={styles.backBtn} />
+        </View>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32, gap: 14 }}>
+          <View style={{
+            width: 64, height: 64, borderRadius: 18, backgroundColor: Colors.surface,
+            borderWidth: 1, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center',
+          }}>
+            <Ionicons name="time-outline" size={30} color={Colors.primary} />
+          </View>
+          <Text style={{ fontSize: 20, fontWeight: '800', color: Colors.textPrimary, textAlign: 'center' }}>
+            Top-ups are coming soon
+          </Text>
+          <Text style={{ fontSize: 14, color: Colors.textSecondary, textAlign: 'center', lineHeight: 21 }}>
+            Buying credits isn’t available just yet. We’re putting the finishing touches on
+            payments — check back shortly.
+          </Text>
+        </View>
+      </View>
+    );
+  }
 
   if (isDesktop) {
     return (

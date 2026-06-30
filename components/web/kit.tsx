@@ -260,8 +260,8 @@ export function Sidebar({ admin, profileName, profileUsername, credits, onSignOu
               onPress={onTopUp}
               style={({ hovered }) => [kit.topUpBtn, hovered && { opacity: 0.88 }]}
             >
-              <Ionicons name="add" size={14} color="#0C0C0C" />
-              <Text style={{ color: '#0C0C0C', fontSize: 13, fontWeight: '800' }}>Top up</Text>
+              <Ionicons name="time-outline" size={14} color="#0C0C0C" />
+              <Text style={{ color: '#0C0C0C', fontSize: 13, fontWeight: '800' }}>Coming soon</Text>
             </Pressable>
           </View>
         )}

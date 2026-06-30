@@ -345,7 +345,7 @@ export default function ProfileScreen() {
                   <Text style={{ fontSize: 15.5, fontWeight: '800', color: FW.text }}>{profile?.credits ?? 0} credits</Text>
                   <Text style={{ fontSize: 12.5, color: FW.sec, marginTop: 2 }}>1 credit = KES {KES_PER_CREDIT}</Text>
                 </View>
-                <WBtn label="Top up" size="sm" onPress={() => router.push('/credits/topup')} />
+                <WBtn label="Coming soon" size="sm" onPress={() => router.push('/credits/topup')} />
               </View>
             </View>
 
@@ -364,7 +364,7 @@ export default function ProfileScreen() {
                 />
               </WebSettingsGroup>
               <WebSettingsGroup title="Credits">
-                <WebSettingsRow label="Top up credits" onPress={() => router.push('/credits/topup')} />
+                <WebSettingsRow label="Top up credits (coming soon)" onPress={() => router.push('/credits/topup')} />
                 <WebSettingsRow label="Transaction history" onPress={() => router.push('/credits/history')} last />
               </WebSettingsGroup>
               {isAdmin && (
