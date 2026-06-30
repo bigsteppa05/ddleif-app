@@ -233,7 +233,7 @@ export default function BookScreen() {
           <View style={webStyles.grid}>
             {searchedEvents.map((event) => (
               <View key={event.id} style={webStyles.gridItem}>
-                <WEventCard event={event} onPress={() => router.push(`/event/${event.id}`)} />
+                <WEventCard event={event} onPress={() => router.push(`/event/${event.slug ?? event.id}`)} />
               </View>
             ))}
           </View>

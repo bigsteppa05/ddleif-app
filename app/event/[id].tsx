@@ -13,18 +13,21 @@ import {
   Platform,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import Head from 'expo-router/head';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Animated, { useSharedValue, useAnimatedStyle, withSpring } from 'react-native-reanimated';
 import { Colors } from '@/constants/colors';
+import { KES_PER_CREDIT } from '@/constants/payments';
 import type { Event } from '@/lib/mockData';
-import { getDisplayEvent, formatDateTime } from '@/lib/events';
+import { getDisplayEvent, getDisplayEventBySlugOrId, formatDateTime } from '@/lib/events';
 import {
   supabase,
   checkExistingBooking,
   cancelBooking,
   getUserProfile,
   getEventParticipants,
+  getAllEventSlugs,
   type EventParticipant,
 } from '@/lib/supabase';
 import { notify } from '@/lib/ui';
@@ -36,6 +39,14 @@ import { WebShell } from '@/components/web/WebShell';
 
 
 const AnimatedTouchable = Animated.createAnimatedComponent(TouchableOpacity);
+
+// Prerender one static HTML file per event (by slug) at web export time.
+// Returns [] when there are no events, so the export never fails; events added
+// after a build are served via the runtime rewrite in vercel.json.
+export async function generateStaticParams(): Promise<{ id: string }[]> {
+  const slugs = await getAllEventSlugs();
+  return slugs.map((slug) => ({ id: slug }));
+}
 
 export default function EventDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -64,7 +75,7 @@ export default function EventDetailScreen() {
   useEffect(() => {
     async function load() {
       const [data, { data: { user } }] = await Promise.all([
-        getDisplayEvent(id),
+        getDisplayEventBySlugOrId(id),
         supabase.auth.getUser(),
       ]);
 
@@ -73,7 +84,7 @@ export default function EventDetailScreen() {
       if (user) {
         setUserId(user.id);
         if (!isMockEvent && data) {
-          const existingId = await checkExistingBooking(user.id, id);
+          const existingId = await checkExistingBooking(user.id, data.id);
           setIsBooked(existingId !== null);
           setBookingId(existingId);
         }
@@ -85,14 +96,15 @@ export default function EventDetailScreen() {
   }, [id]);
 
   useEffect(() => {
-    if (isMockEvent) return;
-    getEventParticipants(id).then(setParticipants);
-  }, [id]);
+    if (isMockEvent || !event) return;
+    getEventParticipants(event.id).then(setParticipants);
+  }, [event?.id, isMockEvent]);
 
   function goToParticipants() {
+    if (!event) return;
     router.push({
       pathname: '/event/participants',
-      params: { eventId: id, title: event?.title ?? '' },
+      params: { eventId: event.id, title: event.title },
     });
   }
 
@@ -102,12 +114,17 @@ export default function EventDetailScreen() {
   }));
 
   async function handleBook() {
-    if (!userId || !event) return;
+    if (!event) return;
+    // Public page: signed-out visitors can view the event but must sign in to book.
+    if (!userId) {
+      router.push('/(auth)/welcome');
+      return;
+    }
     setBookingLoading(true);
 
     // book_event RPC now returns { booking_id, booking_ref } — no follow-up SELECT needed
     const { data: rpcData, error } = await supabase.rpc('book_event', {
-      p_event_id: id,
+      p_event_id: event.id,
       p_user_id: userId,
     });
 
@@ -129,9 +146,9 @@ export default function EventDetailScreen() {
     }
     setBookError('');
 
-    const updated = await getDisplayEvent(id);
+    const updated = await getDisplayEvent(event.id);
     if (updated) setEvent(updated);
-    getEventParticipants(id).then(setParticipants);
+    getEventParticipants(event.id).then(setParticipants);
     setIsBooked(true);
     if (rpcData?.booking_id) setBookingId(rpcData.booking_id);
     setBookingLoading(false);
@@ -142,7 +159,7 @@ export default function EventDetailScreen() {
         pathname: '/booking/confirmed',
         params: {
           bookingId: rpcData.booking_id,
-          eventId: id,
+          eventId: event.id,
           title: ev?.title ?? '',
           sport: ev?.sport ?? '',
           date: ev?.date ?? '',
@@ -158,7 +175,7 @@ export default function EventDetailScreen() {
 
   function viewTicket() {
     if (!bookingId) return;
-    router.push({ pathname: '/booking/ticket', params: { bookingId, eventId: id } });
+    router.push({ pathname: '/booking/ticket', params: { bookingId, eventId: event?.id ?? '' } });
   }
 
   // Full refund only when cancelling >12h before start (mirrors the server-side gate).
@@ -170,15 +187,15 @@ export default function EventDetailScreen() {
   }
 
   async function doCancel() {
-    if (!userId || !bookingId) return;
+    if (!userId || !bookingId || !event) return;
     setCancelLoading(true);
     try {
       const { refunded_credits } = await cancelBooking(bookingId, userId);
       setIsBooked(false);
       setBookingId(null);
-      const updated = await getDisplayEvent(id);
+      const updated = await getDisplayEvent(event.id);
       if (updated) setEvent(updated);
-      getEventParticipants(id).then(setParticipants);
+      getEventParticipants(event.id).then(setParticipants);
       // A refund moved the balance — refresh the sidebar/profile credit card live,
       // matching the top-up flow (no refund within 12h means nothing to broadcast).
       if (refunded_credits > 0) notifyCreditsChanged();
@@ -258,15 +275,71 @@ export default function EventDetailScreen() {
     if (isMockEvent) return 'Demo Event';
     if (isBooked) return 'Booked ✓';
     if (isFull) return 'Fully Booked';
+    if (!userId) return 'Sign in to Book';
     return 'Book Now';
   }
 
-  const buttonDisabled = isMockEvent || isBooked || isFull || bookingLoading || !userId;
+  // Signed-out visitors can press Book — handleBook sends them to sign in.
+  const buttonDisabled = isMockEvent || isBooked || isFull || bookingLoading;
+
+  // ── SEO: per-event metadata + SportsEvent structured data ──────────────────
+  // Rendered into the document <head> on web. Googlebot executes JS and indexes
+  // this; a build-time prerender (follow-up) would also feed non-JS crawlers.
+  const canonicalSlug = event.slug ?? id;
+  const eventUrl = `https://fitxball.com/event/${canonicalSlug}`;
+  const metaDesc = (
+    event.description?.trim() ||
+    `Join ${event.title} — ${event.sport} in Nairobi with fitXball on ${formatDateTime(event.date, event.time)} at ${event.location}.`
+  )
+    .replace(/\s+/g, ' ')
+    .slice(0, 160);
+  const datePart = (event.rawDate ?? '').slice(0, 10);
+  const startDate = /^\d{2}:\d{2}$/.test(event.time) ? `${datePart}T${event.time}:00+03:00` : datePart;
+  const priceKes = event.is_free ? 0 : event.cost_in_credits * KES_PER_CREDIT;
+  const eventJsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'SportsEvent',
+    name: event.title,
+    description: metaDesc,
+    ...(startDate ? { startDate } : {}),
+    eventStatus: 'https://schema.org/EventScheduled',
+    eventAttendanceMode: 'https://schema.org/OfflineEventAttendanceMode',
+    sport: event.sport,
+    location: {
+      '@type': 'Place',
+      name: event.locationFull || event.location,
+      address: { '@type': 'PostalAddress', addressLocality: 'Nairobi', addressCountry: 'KE' },
+    },
+    ...(event.image_url ? { image: [event.image_url] } : {}),
+    organizer: { '@type': 'Organization', name: 'fitXball', url: 'https://fitxball.com' },
+    offers: {
+      '@type': 'Offer',
+      url: eventUrl,
+      price: String(priceKes),
+      priceCurrency: 'KES',
+      availability: isFull ? 'https://schema.org/SoldOut' : 'https://schema.org/InStock',
+    },
+  };
+  const eventHead = (
+    <Head>
+      <title>{`${event.title} | ${event.sport} in Nairobi | fitXball`}</title>
+      <meta name="description" content={metaDesc} />
+      <link rel="canonical" href={eventUrl} />
+      <meta property="og:type" content="website" />
+      <meta property="og:title" content={event.title} />
+      <meta property="og:description" content={metaDesc} />
+      <meta property="og:url" content={eventUrl} />
+      {event.image_url ? <meta property="og:image" content={event.image_url} /> : null}
+      <meta name="twitter:card" content="summary_large_image" />
+      <script type="application/ld+json">{JSON.stringify(eventJsonLd)}</script>
+    </Head>
+  );
 
   if (isDesktop) {
     const balanceAfter = credits !== null && !event.is_free ? credits - event.cost_in_credits : null;
     return (
       <WebShell padTop={36}>
+        {eventHead}
         <TouchableOpacity
           style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 20 }}
           onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)/book'))}
@@ -451,6 +524,7 @@ export default function EventDetailScreen() {
 
   return (
     <View style={styles.container}>
+      {eventHead}
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: insets.bottom + 100 }}

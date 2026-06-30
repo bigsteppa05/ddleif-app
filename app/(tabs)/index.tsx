@@ -137,7 +137,7 @@ export default function HomeScreen() {
         <View style={desktopStyles.grid}>
           {events.slice(0, 6).map((event) => (
             <View key={event.id} style={desktopStyles.gridItem}>
-              <WEventCard event={event} onPress={() => router.push(`/event/${event.id}`)} />
+              <WEventCard event={event} onPress={() => router.push(`/event/${event.slug ?? event.id}`)} />
             </View>
           ))}
         </View>

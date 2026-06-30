@@ -1,5 +1,7 @@
-import { getEvents, getEventById, type Event as SupabaseEvent } from '@/lib/supabase';
+import { getEvents, getEventById, getEventBySlug, type Event as SupabaseEvent } from '@/lib/supabase';
 import type { Event as DisplayEvent } from '@/lib/mockData';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function formatEventDate(iso: string): string {
   if (!iso) return iso;
@@ -37,6 +39,7 @@ export function formatDateTime(date: string, time?: string): string {
 export function normalizeEvent(e: SupabaseEvent): DisplayEvent {
   return {
     id: e.id,
+    slug: e.slug ?? undefined,
     title: e.title,
     sport: e.sport,
     date: formatEventDate(e.date),
@@ -75,6 +78,17 @@ export async function getDisplayEvents(): Promise<DisplayEvent[]> {
 export async function getDisplayEvent(id: string): Promise<DisplayEvent | null> {
   try {
     const data = await getEventById(id);
+    return data ? normalizeEvent(data) : null;
+  } catch {
+    return null;
+  }
+}
+
+// Resolves a public event route param that may be a readable slug
+// (/event/pilot-football-837f) or a raw UUID (legacy/in-app booking links).
+export async function getDisplayEventBySlugOrId(param: string): Promise<DisplayEvent | null> {
+  try {
+    const data = UUID_RE.test(param) ? await getEventById(param) : await getEventBySlug(param);
     return data ? normalizeEvent(data) : null;
   } catch {
     return null;

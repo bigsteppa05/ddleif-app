@@ -55,6 +55,7 @@ export type Profile = {
 
 export type Event = {
   id: string;
+  slug: string | null;
   title: string;
   sport: string;
   description: string;
@@ -147,6 +148,43 @@ export async function getEventById(id: string): Promise<Event | null> {
     .single();
   if (error) return null;
   return data;
+}
+
+export async function getEventBySlug(slug: string): Promise<Event | null> {
+  const { data, error } = await supabase
+    .from('events')
+    .select('*')
+    .eq('slug', slug)
+    .single();
+  if (error) return null;
+  return data;
+}
+
+// All published event slugs — used at web build time by generateStaticParams to
+// prerender one HTML file per event. Returns [] on any failure so the export
+// never breaks (events created after a build are served via the runtime fallback).
+export async function getAllEventSlugs(): Promise<string[]> {
+  const { data, error } = await supabase
+    .from('events')
+    .select('slug')
+    .not('slug', 'is', null);
+  if (error) return [];
+  return (data ?? []).map((r) => r.slug as string);
+}
+
+// Readable, permanent slug for an event's public URL, e.g.
+// "Pilot 7-a-side Football" + id "837fd1.." -> "pilot-7-a-side-football-837f".
+// The 4-char id suffix guarantees uniqueness without a collision-retry loop.
+export function makeEventSlug(title: string, id: string): string {
+  const base = title
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '') // strip diacritics (é -> e)
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60);
+  const suffix = id.replace(/-/g, '').slice(0, 4);
+  return base ? `${base}-${suffix}` : `event-${suffix}`;
 }
 
 export async function getUserProfile(userId?: string): Promise<Profile | null> {

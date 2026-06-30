@@ -81,12 +81,13 @@ export default function RootLayout() {
       <Stack.Screen name="index" />
       <Stack.Screen name="(auth)" options={{ animation: 'fade' }} />
       <Stack.Screen name="legal/[page]" />
+      {/* Public so events are crawlable + shareable; the Book action gates on auth itself */}
+      <Stack.Screen
+        name="event/[id]"
+        options={{ animation: 'slide_from_bottom', headerShown: false }}
+      />
       <Stack.Protected guard={isLoggedIn || DEV_BYPASS_AUTH}>
         <Stack.Screen name="(tabs)" />
-        <Stack.Screen
-          name="event/[id]"
-          options={{ animation: 'slide_from_bottom', headerShown: false }}
-        />
         <Stack.Screen name="admin" />
         <Stack.Screen name="profile/edit" />
         <Stack.Screen name="credits/topup" />

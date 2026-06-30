@@ -16,7 +16,7 @@ export function HomeEventCard({ event, index = 0 }: Props) {
       <TouchableOpacity
         style={styles.card}
         activeOpacity={0.9}
-        onPress={() => router.push(`/event/${event.id}`)}
+        onPress={() => router.push(`/event/${event.slug ?? event.id}`)}
       >
         {event.image_url ? (
           <Image source={{ uri: event.image_url }} style={styles.image} resizeMode="cover" />

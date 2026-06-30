@@ -16,7 +16,7 @@ import {
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { supabase, uploadEventImage } from '@/lib/supabase';
+import { supabase, uploadEventImage, makeEventSlug } from '@/lib/supabase';
 
 function uuid4(): string {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
@@ -109,6 +109,7 @@ export default function AddEventScreen() {
 
     const { error } = await supabase.from('events').insert({
       id: eventId,
+      slug: makeEventSlug(form.title.trim(), eventId),
       title: form.title.trim(),
       sport: form.sport,
       description: form.description.trim(),
