@@ -271,14 +271,21 @@ export default function RegisterScreen() {
   // session from the OTP verify, so this just sets a password — enabling password
   // login later. Returns false (instead of throwing) so callers can surface the
   // failure rather than letting the account slip onto the OTP-only path.
-  async function savePassword(): Promise<boolean> {
+  async function savePassword(): Promise<{ ok: boolean; message?: string }> {
     const { error } = await supabase.auth.updateUser({ password });
     if (error) {
+      const code = (error as { code?: string }).code;
+      // The password was already set on a prior attempt — Supabase rejects an
+      // identical password with `same_password`. That means we're done, not failed.
+      if (code === 'same_password' || /different from the old/i.test(error.message)) {
+        setPwSaved(true);
+        return { ok: true };
+      }
       console.warn('Could not set password:', error.message);
-      return false;
+      return { ok: false, message: error.message };
     }
     setPwSaved(true);
-    return true;
+    return { ok: true };
   }
 
   // ── Submit ────────────────────────────────────────────────────────────────
@@ -298,10 +305,12 @@ export default function RegisterScreen() {
     // attempt failed (e.g. a network blip), retry here and block completion on
     // failure — the account must never land in a passwordless state.
     if (!pwSaved) {
-      const ok = await savePassword();
-      if (!ok) {
+      const res = await savePassword();
+      if (!res.ok) {
         setLoading(false);
-        setToastMsg("We couldn't set your password. Check your connection and try again.");
+        // Surface the real reason (e.g. a weak or breached password) instead of a
+        // generic connection message, so the user knows how to fix it.
+        setToastMsg(res.message || "We couldn't set your password. Please try again.");
         return;
       }
     }
@@ -414,10 +423,8 @@ export default function RegisterScreen() {
         } else {
           setOtpError('');
           setOtpVerified(true);
-          // Best-effort: attach the password now so the common path is fast.
-          // handleFinish re-checks and blocks completion if this didn't land, so
-          // registration can never finish without a password set.
-          void savePassword();
+          // The password is set once, awaited, in handleFinish. Setting it here
+          // too caused a same_password 422 race that blocked account creation.
           // Auto-advance to the profile step once verified
           setTimeout(() => setStep((s) => (s === 1 ? 2 : s)), 700);
         }
