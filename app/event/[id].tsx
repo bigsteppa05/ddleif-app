@@ -136,6 +136,12 @@ export default function EventDetailScreen() {
       setBookingLoading(false);
       if (error.message.includes('already_booked')) {
         setIsBooked(true);
+      } else if (error.message.includes('profile_incomplete')) {
+        // Half-registered account (email OTP verified but signup wizard never
+        // finished) — send them to add a name before they can book.
+        setBookError('Add your name to finish setting up your account before booking.');
+        notify('Complete your profile', 'Add your name to finish setting up your account before booking.');
+        router.push('/profile/edit');
       } else if (error.message.includes('no_slots')) {
         setBookError('No slots remaining for this event.');
         notify('Fully Booked', 'No slots remaining for this event.');

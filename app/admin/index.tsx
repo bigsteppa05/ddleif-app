@@ -258,7 +258,15 @@ export default function AdminHomeScreen() {
                 <Text style={styles.rowTitle} numberOfLines={1}>{item.title}</Text>
                 <Text style={styles.rowMeta}>{item.sport}  ·  {item.date}</Text>
                 <Text style={styles.rowMeta}>
-                  {item.slots_available} slots  ·  {item.is_free ? 'Free' : `${item.cost_in_credits} credits`}
+                  {item.is_free ? 'Free' : `${item.cost_in_credits} credits`}
+                </Text>
+                <Text
+                  style={[
+                    styles.rowBooked,
+                    item.slots_booked >= item.slots_available && styles.rowBookedFull,
+                  ]}
+                >
+                  {item.slots_booked}/{item.slots_available} booked
                 </Text>
               </View>
               <View style={styles.rowActions}>
@@ -385,6 +393,15 @@ const styles = StyleSheet.create({
   rowMeta: {
     color: Colors.textSecondary,
     fontSize: 12,
+  },
+  rowBooked: {
+    color: Colors.primary,
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: 1,
+  },
+  rowBookedFull: {
+    color: Colors.error,
   },
   rowActions: {
     flexDirection: 'row',
