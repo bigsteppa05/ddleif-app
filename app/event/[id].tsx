@@ -11,6 +11,7 @@ import {
   Linking,
   Share,
   Platform,
+  Modal,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import Head from 'expo-router/head';
@@ -33,6 +34,7 @@ import {
 import { notify } from '@/lib/ui';
 import { notifyCreditsChanged } from '@/lib/credits';
 import { openGoogleMaps, hasMapsChooser, type MapsTarget } from '@/lib/maps';
+import { shareEventCard, shareEventLink } from '@/lib/shareCard';
 import { MapsChooser } from '@/components/MapsChooser';
 import { FW, WBtn, WGhostBtn, WTag, useIsDesktopWeb } from '@/components/web/kit';
 import { WebShell } from '@/components/web/WebShell';
@@ -64,6 +66,8 @@ export default function EventDetailScreen() {
   const [bookError, setBookError] = useState('');
   const [participants, setParticipants] = useState<EventParticipant[]>([]);
   const [mapsChooserVisible, setMapsChooserVisible] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareBusy, setShareBusy] = useState(false);
 
   useEffect(() => {
     if (!isDesktop) return;
@@ -244,11 +248,52 @@ export default function EventDetailScreen() {
     else openGoogleMaps({ name: event.location, mapsUrl: event.mapsUrl });
   }
 
+  function eventShareData() {
+    if (!event) return null;
+    return {
+      title: event.title,
+      sport: event.sport,
+      dateTime: formatDateTime(event.date, event.time),
+      location: event.location,
+      url: `https://www.fitxball.com/event/${event.slug ?? id}`,
+    };
+  }
+
   function handleShare() {
     if (!event) return;
+    // Web: offer the image card or a link (Luma/Spotify style). Native: share the
+    // real event link as text (image card would need a native rebuild).
+    if (Platform.OS === 'web') {
+      setShareOpen(true);
+      return;
+    }
+    const d = eventShareData()!;
     Share.share({
-      message: `Join me at ${event.title} on ${formatDateTime(event.date, event.time)} at ${event.location} — download fitXball to book your spot: https://fitxball.app/download`,
+      message: `Join ${d.title} on ${d.dateTime} at ${d.location} — book on fitXball: ${d.url}`,
+      url: d.url,
     });
+  }
+
+  async function onShareCard() {
+    const d = eventShareData();
+    if (!d) return;
+    setShareBusy(true);
+    const result = await shareEventCard(d);
+    setShareBusy(false);
+    setShareOpen(false);
+    if (result === 'downloaded' && typeof window !== 'undefined') {
+      window.alert('Card saved to your device — post it to your story or share it anywhere.');
+    }
+  }
+
+  async function onShareLink() {
+    const d = eventShareData();
+    if (!d) return;
+    const result = await shareEventLink(d);
+    setShareOpen(false);
+    if (result === 'copied' && typeof window !== 'undefined') {
+      window.alert('Link copied to clipboard.');
+    }
   }
 
   if (loading) {
@@ -335,11 +380,44 @@ export default function EventDetailScreen() {
     </Head>
   );
 
+  // Web share sheet (Luma/Spotify style): image card or link. Opens only on web.
+  const shareSheet = (
+    <Modal visible={shareOpen} transparent animationType="fade" onRequestClose={() => setShareOpen(false)}>
+      <TouchableOpacity style={styles.shareBackdrop} activeOpacity={1} onPress={() => setShareOpen(false)}>
+        <View style={styles.shareSheet}>
+          <Text style={styles.shareTitle}>Share this event</Text>
+          <TouchableOpacity style={styles.shareOpt} onPress={onShareCard} disabled={shareBusy} activeOpacity={0.85}>
+            <View style={styles.shareOptIcon}><Ionicons name="image-outline" size={20} color={Colors.primary} /></View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.shareOptLabel}>Share as image card</Text>
+              <Text style={styles.shareOptSub}>Post to your story or send anywhere</Text>
+            </View>
+            {shareBusy
+              ? <ActivityIndicator color={Colors.primary} />
+              : <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />}
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.shareOpt} onPress={onShareLink} activeOpacity={0.85}>
+            <View style={styles.shareOptIcon}><Ionicons name="link-outline" size={20} color={Colors.primary} /></View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.shareOptLabel}>Share link</Text>
+              <Text style={styles.shareOptSub}>Copy or send the event link</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.shareCancel} onPress={() => setShareOpen(false)}>
+            <Text style={styles.shareCancelText}>Cancel</Text>
+          </TouchableOpacity>
+        </View>
+      </TouchableOpacity>
+    </Modal>
+  );
+
   if (isDesktop) {
     const balanceAfter = credits !== null && !event.is_free ? credits - event.cost_in_credits : null;
     return (
       <WebShell padTop={36}>
         {eventHead}
+        {shareSheet}
         <TouchableOpacity
           style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 20 }}
           onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)/book'))}
@@ -525,6 +603,7 @@ export default function EventDetailScreen() {
   return (
     <View style={styles.container}>
       {eventHead}
+      {shareSheet}
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: insets.bottom + 100 }}
@@ -813,6 +892,31 @@ const infoStyles = StyleSheet.create({
 });
 
 const styles = StyleSheet.create({
+  shareBackdrop: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.6)',
+    alignItems: 'center', justifyContent: 'center', padding: 24,
+  },
+  shareSheet: {
+    width: '100%', maxWidth: 420,
+    backgroundColor: Colors.surface,
+    borderWidth: 1, borderColor: Colors.border,
+    borderRadius: 20, padding: 18, gap: 10,
+  },
+  shareTitle: { color: Colors.textPrimary, fontSize: 17, fontWeight: '800', marginBottom: 4, paddingHorizontal: 4 },
+  shareOpt: {
+    flexDirection: 'row', alignItems: 'center', gap: 14,
+    backgroundColor: Colors.surfaceElevated,
+    borderRadius: 14, padding: 14,
+  },
+  shareOptIcon: {
+    width: 40, height: 40, borderRadius: 11,
+    backgroundColor: Colors.surface,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  shareOptLabel: { color: Colors.textPrimary, fontSize: 15, fontWeight: '700' },
+  shareOptSub: { color: Colors.textSecondary, fontSize: 12.5, marginTop: 2 },
+  shareCancel: { alignItems: 'center', paddingVertical: 12, marginTop: 2 },
+  shareCancelText: { color: Colors.textSecondary, fontSize: 15, fontWeight: '700' },
   container: {
     flex: 1,
     backgroundColor: Colors.background,
