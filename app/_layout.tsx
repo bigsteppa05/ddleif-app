@@ -86,6 +86,7 @@ export default function RootLayout() {
       <Stack.Screen name="index" />
       <Stack.Screen name="(auth)" options={{ animation: 'fade' }} />
       <Stack.Screen name="legal/[page]" />
+      <Stack.Screen name="sports/[sport]" />
       {/* Public so events are crawlable + shareable; the Book action gates on auth itself */}
       <Stack.Screen
         name="event/[id]"

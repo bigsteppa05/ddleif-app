@@ -148,7 +148,7 @@ export default function LegalScreen() {
     <Head>
       <title>{`${doc.title} | fitXball`}</title>
       <meta name="description" content={doc.intro.slice(0, 160)} />
-      <link rel="canonical" href={`https://fitxball.com/legal/${slug}`} />
+      <link rel="canonical" href={`https://www.fitxball.com/legal/${slug}`} />
     </Head>
     <ScrollView
       style={styles.container}

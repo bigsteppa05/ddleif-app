@@ -9,4 +9,4 @@ Disallow: /(auth)/
 Disallow: /login/
 Disallow: /register/
 
-Sitemap: https://fitxball.com/sitemap.xml
+Sitemap: https://www.fitxball.com/sitemap.xml

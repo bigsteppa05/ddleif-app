@@ -1,14 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Baseline sitemap. Only lists URLs that resolve to real, indexable content today.
-  Sport, venue and event pages get added here once they exist as their own routes
-  (after the web.output: static migration). Prefer generating this file at build
-  time from Supabase so live events stay in sync — see scripts/ (to be added).
+  Lists the permanent, indexable pages. Individual event pages are added by a
+  future build-time generator (they expire); the pages below rank continuously.
 -->
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url>
-    <loc>https://fitxball.com/</loc>
-    <changefreq>daily</changefreq>
-    <priority>1.0</priority>
-  </url>
+  <url><loc>https://www.fitxball.com/</loc><changefreq>daily</changefreq><priority>1.0</priority></url>
+  <url><loc>https://www.fitxball.com/sports/football</loc><changefreq>weekly</changefreq><priority>0.9</priority></url>
+  <url><loc>https://www.fitxball.com/sports/padel</loc><changefreq>weekly</changefreq><priority>0.9</priority></url>
+  <url><loc>https://www.fitxball.com/sports/basketball</loc><changefreq>weekly</changefreq><priority>0.9</priority></url>
+  <url><loc>https://www.fitxball.com/sports/volleyball</loc><changefreq>weekly</changefreq><priority>0.9</priority></url>
+  <url><loc>https://www.fitxball.com/legal/terms</loc><changefreq>yearly</changefreq><priority>0.3</priority></url>
+  <url><loc>https://www.fitxball.com/legal/privacy</loc><changefreq>yearly</changefreq><priority>0.3</priority></url>
+  <url><loc>https://www.fitxball.com/legal/cookies</loc><changefreq>yearly</changefreq><priority>0.3</priority></url>
 </urlset>

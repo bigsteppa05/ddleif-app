@@ -11,7 +11,7 @@ import { type PropsWithChildren } from 'react';
  * (two <title>s, etc.). The homepage's own tags are in app/index.tsx.
  */
 
-const SITE_URL = 'https://fitxball.com';
+const SITE_URL = 'https://www.fitxball.com';
 const SITE_NAME = 'fitXball';
 const DEFAULT_DESCRIPTION =
   'Discover and book organised football, padel, basketball and volleyball sessions across Nairobi. Choose a game, reserve your place and show up ready to play.';

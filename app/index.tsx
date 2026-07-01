@@ -11,20 +11,20 @@ const HOME_DESC =
   'Discover and book organised football, padel, basketball and volleyball sessions across Nairobi. Choose a game, reserve your place and show up ready to play.';
 
 // The `/` route is a redirect gate, so the homepage's own SEO tags live here
-// (this is the HTML Google serves for https://fitxball.com/).
+// (this is the HTML Google serves for https://www.fitxball.com/).
 function HomeHead() {
   return (
     <Head>
       <title>{HOME_TITLE}</title>
       <meta name="description" content={HOME_DESC} />
-      <link rel="canonical" href="https://fitxball.com/" />
+      <link rel="canonical" href="https://www.fitxball.com/" />
       <meta property="og:type" content="website" />
       <meta property="og:title" content={HOME_TITLE} />
       <meta property="og:description" content={HOME_DESC} />
-      <meta property="og:url" content="https://fitxball.com/" />
-      <meta property="og:image" content="https://fitxball.com/logo.png" />
+      <meta property="og:url" content="https://www.fitxball.com/" />
+      <meta property="og:image" content="https://www.fitxball.com/logo.png" />
       <meta name="twitter:card" content="summary_large_image" />
-      <meta name="twitter:image" content="https://fitxball.com/logo.png" />
+      <meta name="twitter:image" content="https://www.fitxball.com/logo.png" />
     </Head>
   );
 }

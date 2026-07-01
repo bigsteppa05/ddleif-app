@@ -286,7 +286,7 @@ export default function EventDetailScreen() {
   // Rendered into the document <head> on web. Googlebot executes JS and indexes
   // this; a build-time prerender (follow-up) would also feed non-JS crawlers.
   const canonicalSlug = event.slug ?? id;
-  const eventUrl = `https://fitxball.com/event/${canonicalSlug}`;
+  const eventUrl = `https://www.fitxball.com/event/${canonicalSlug}`;
   const metaDesc = (
     event.description?.trim() ||
     `Join ${event.title} — ${event.sport} in Nairobi with fitXball on ${formatDateTime(event.date, event.time)} at ${event.location}.`
@@ -311,7 +311,7 @@ export default function EventDetailScreen() {
       address: { '@type': 'PostalAddress', addressLocality: 'Nairobi', addressCountry: 'KE' },
     },
     ...(event.image_url ? { image: [event.image_url] } : {}),
-    organizer: { '@type': 'Organization', name: 'fitXball', url: 'https://fitxball.com' },
+    organizer: { '@type': 'Organization', name: 'fitXball', url: 'https://www.fitxball.com' },
     offers: {
       '@type': 'Offer',
       url: eventUrl,
