@@ -93,7 +93,7 @@ export default function AdminHomeScreen() {
                 return;
               }
               router.push({
-                pathname: '/admin/scanner',
+                pathname: '/checkin/scanner',
                 params: { eventId: target.id, eventTitle: target.title, eventDate: formatDateTime(target.date, target.time), total: String(target.slots_available) },
               });
             }} />,
@@ -181,7 +181,7 @@ export default function AdminHomeScreen() {
                     {([
                       ['pencil-outline', () => router.push(`/admin/edit-event/${item.id}`), FW.sec],
                       ['qr-code-outline', () => router.push({
-                        pathname: '/admin/scanner',
+                        pathname: '/checkin/scanner',
                         params: { eventId: item.id, eventTitle: item.title, eventDate: formatDateTime(item.date, item.time), total: String(item.slots_available) },
                       }), FW.sec],
                       ['trash-outline', () => webDelete(item), FW.error],
@@ -221,7 +221,7 @@ export default function AdminHomeScreen() {
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.usersButton}
-            onPress={() => router.push('/admin/scanner')}
+            onPress={() => router.push('/checkin/scanner')}
             activeOpacity={0.85}
           >
             <Ionicons name="qr-code-outline" size={18} color={Colors.primary} />
@@ -266,7 +266,7 @@ export default function AdminHomeScreen() {
                   style={styles.editBtn}
                   onPress={() =>
                     router.push({
-                      pathname: '/admin/scanner',
+                      pathname: '/checkin/scanner',
                       params: {
                         eventId: item.id,
                         eventTitle: item.title,

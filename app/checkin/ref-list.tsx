@@ -157,7 +157,7 @@ export default function RefListScreen() {
                 size="sm"
                 onPress={() =>
                   router.push({
-                    pathname: '/admin/scanner',
+                    pathname: '/checkin/scanner',
                     params: { eventId, eventTitle, eventDate, total: String(total) },
                   })
                 }

@@ -39,6 +39,7 @@ export type Profile = {
   credits: number;
   avatar_url: string | null;
   is_admin: boolean;
+  can_check_in: boolean;
   gender: string | null;
   country: string | null;
   date_of_birth: string | null;
@@ -343,6 +344,21 @@ export async function getEventParticipants(eventId: string): Promise<EventPartic
 export async function checkIsAdmin(): Promise<boolean> {
   const { data } = await supabase.rpc('check_is_admin');
   return data === true;
+}
+
+// True for admins AND checkers — gates the /checkin attendance area.
+export async function checkCanCheckIn(): Promise<boolean> {
+  const { data } = await supabase.rpc('check_can_check_in');
+  return data === true;
+}
+
+// Admin-only: grant/revoke the checker privilege (server enforces the caller is admin).
+export async function setCheckInPrivilege(userId: string, canCheckIn: boolean): Promise<void> {
+  const { error } = await supabase.rpc('set_check_in_privilege', {
+    p_user_id: userId,
+    p_can_check_in: canCheckIn,
+  });
+  if (error) throw error;
 }
 
 export async function grantCredits(userId: string, delta: number): Promise<void> {

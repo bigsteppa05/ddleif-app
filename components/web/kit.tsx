@@ -192,7 +192,7 @@ const USER_NAV: Array<[IoniconName, IoniconName, string, string]> = [
 
 const ADMIN_NAV: Array<[IoniconName, IoniconName, string, string]> = [
   ['home-outline', 'home', 'Overview', '/admin'],
-  ['qr-code-outline', 'qr-code', 'Scan entry', '/admin/scanner'],
+  ['qr-code-outline', 'qr-code', 'Scan entry', '/checkin/scanner'],
   ['people-outline', 'people', 'Members', '/admin/users'],
 ];
 

@@ -94,6 +94,7 @@ export default function RootLayout() {
       <Stack.Protected guard={isLoggedIn || DEV_BYPASS_AUTH}>
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="admin" />
+        <Stack.Screen name="checkin" />
         <Stack.Screen name="profile/edit" />
         <Stack.Screen name="credits/topup" />
         <Stack.Screen name="credits/history" />

@@ -17,7 +17,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '@/constants/colors';
 import { notify } from '@/lib/ui';
-import { supabase, grantCredits, type Profile } from '@/lib/supabase';
+import { supabase, grantCredits, setCheckInPrivilege, type Profile } from '@/lib/supabase';
 import { FW, WTag, WAvatar, PageTitle, useIsDesktopWeb } from '@/components/web/kit';
 import { WebShell } from '@/components/web/WebShell';
 
@@ -68,6 +68,18 @@ export default function AdminUsersScreen() {
   function openGrant(profile: Profile) {
     setGrantAmount('');
     setGrantTarget(profile);
+  }
+
+  // Grant/revoke the checker privilege (attendance check-in). Optimistic with revert.
+  async function toggleChecker(profile: Profile) {
+    const next = !profile.can_check_in;
+    setProfiles((prev) => prev.map((p) => (p.id === profile.id ? { ...p, can_check_in: next } : p)));
+    try {
+      await setCheckInPrivilege(profile.id, next);
+    } catch (err) {
+      setProfiles((prev) => prev.map((p) => (p.id === profile.id ? { ...p, can_check_in: !next } : p)));
+      notify('Error', String(err));
+    }
   }
 
   const initials = (name: string) =>
@@ -174,9 +186,23 @@ export default function AdminUsersScreen() {
                   {item.credits} cr
                 </Text>
                 <View style={{ width: 90, paddingHorizontal: 8 }}>
-                  {item.is_admin
-                    ? <WTag label="Admin" tone="limeSoft" />
-                    : <Text style={{ color: FW.muted, fontSize: 13 }}>Member</Text>}
+                  {item.is_admin ? (
+                    <WTag label="Admin" tone="limeSoft" />
+                  ) : (
+                    <TouchableOpacity
+                      onPress={() => toggleChecker(item)}
+                      style={{
+                        alignSelf: 'flex-start', borderRadius: 8, paddingVertical: 5, paddingHorizontal: 10,
+                        borderWidth: 1,
+                        borderColor: item.can_check_in ? FW.primary : FW.border,
+                        backgroundColor: item.can_check_in ? `${FW.primary}1A` : 'transparent',
+                      }}
+                    >
+                      <Text style={{ color: item.can_check_in ? FW.primary : FW.muted, fontSize: 11.5, fontWeight: '700' }}>
+                        Checker
+                      </Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
                 <View style={{ width: 90, paddingHorizontal: 8, alignItems: 'flex-end' }}>
                   <TouchableOpacity
@@ -236,10 +262,28 @@ export default function AdminUsersScreen() {
                 <Text style={styles.email} numberOfLines={1}>{item.email}</Text>
                 <Text style={styles.credits}>{item.credits} credits</Text>
               </View>
-              <TouchableOpacity style={styles.grantBtn} onPress={() => openGrant(item)}>
-                <Ionicons name="add-circle-outline" size={18} color={Colors.primary} />
-                <Text style={styles.grantBtnText}>Credits</Text>
-              </TouchableOpacity>
+              <View style={{ gap: 6, alignItems: 'flex-end' }}>
+                <TouchableOpacity style={styles.grantBtn} onPress={() => openGrant(item)}>
+                  <Ionicons name="add-circle-outline" size={18} color={Colors.primary} />
+                  <Text style={styles.grantBtnText}>Credits</Text>
+                </TouchableOpacity>
+                {item.is_admin ? (
+                  <Text style={{ color: Colors.primary, fontSize: 11, fontWeight: '700', paddingRight: 4 }}>Admin</Text>
+                ) : (
+                  <TouchableOpacity
+                    onPress={() => toggleChecker(item)}
+                    style={{
+                      borderWidth: 1, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 6,
+                      borderColor: item.can_check_in ? Colors.primary : Colors.border,
+                      backgroundColor: item.can_check_in ? `${Colors.primary}1A` : 'transparent',
+                    }}
+                  >
+                    <Text style={{ color: item.can_check_in ? Colors.primary : Colors.textMuted, fontSize: 11.5, fontWeight: '700' }}>
+                      {item.can_check_in ? 'Checker ✓' : 'Make checker'}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
             </View>
           )}
         />

@@ -90,7 +90,7 @@ export default function ScannerScreen() {
         </Text>
         <TouchableOpacity
           style={{ marginTop: 24, backgroundColor: Colors.primary, borderRadius: 28, paddingHorizontal: 28, paddingVertical: 14 }}
-          onPress={() => router.push({ pathname: '/admin/ref-list', params: { eventId, eventTitle, eventDate } })}
+          onPress={() => router.push({ pathname: '/checkin/ref-list', params: { eventId, eventTitle, eventDate } })}
         >
           <Text style={{ color: Colors.background, fontSize: 15, fontWeight: '800' }}>Open Entry List</Text>
         </TouchableOpacity>
@@ -257,7 +257,7 @@ export default function ScannerScreen() {
           </Text>
           <TouchableOpacity
             style={styles.manualBtn}
-            onPress={() => router.push({ pathname: '/admin/ref-list', params: { eventId, eventTitle, eventDate } })}
+            onPress={() => router.push({ pathname: '/checkin/ref-list', params: { eventId, eventTitle, eventDate } })}
             activeOpacity={0.85}
           >
             <Ionicons name="list-outline" size={18} color={Colors.textPrimary} />
@@ -373,7 +373,7 @@ export default function ScannerScreen() {
           </View>
           <TouchableOpacity
             style={styles.refListBtn}
-            onPress={() => router.push({ pathname: '/admin/ref-list', params: { eventId, eventTitle, eventDate } })}
+            onPress={() => router.push({ pathname: '/checkin/ref-list', params: { eventId, eventTitle, eventDate } })}
             activeOpacity={0.85}
           >
             <Ionicons name="list-outline" size={18} color={Colors.textPrimary} />

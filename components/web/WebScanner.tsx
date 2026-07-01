@@ -149,7 +149,7 @@ export function WebScanner({ eventId, eventTitle, eventDate, total }: {
         right={
           <WGhostBtn
             label="Open Entry List" icon="list-outline"
-            onPress={() => router.push({ pathname: '/admin/ref-list', params: { eventId, eventTitle, eventDate } })}
+            onPress={() => router.push({ pathname: '/checkin/ref-list', params: { eventId, eventTitle, eventDate } })}
           />
         }
       />

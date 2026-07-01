@@ -367,6 +367,11 @@ export default function ProfileScreen() {
                 <WebSettingsRow label="Top up credits (coming soon)" onPress={() => router.push('/credits/topup')} />
                 <WebSettingsRow label="Transaction history" onPress={() => router.push('/credits/history')} last />
               </WebSettingsGroup>
+              {(isAdmin || profile?.can_check_in) && (
+                <WebSettingsGroup title="Attendance">
+                  <WebSettingsRow label="Check in" onPress={() => router.push('/checkin')} last />
+                </WebSettingsGroup>
+              )}
               {isAdmin && (
                 <WebSettingsGroup title="Admin">
                   <WebSettingsRow label="Admin dashboard" onPress={() => router.push('/admin')} last />
@@ -496,6 +501,15 @@ export default function ProfileScreen() {
                   Linking.openURL('mailto:support@fitXball.app?subject=fitXball%20Support%20Request')
                 }
               />
+              {(isAdmin || profile?.can_check_in) && (
+                <>
+                  <View style={styles.divider} />
+                  <TouchableOpacity style={menuStyles.row} onPress={() => router.push('/checkin')}>
+                    <Text style={[menuStyles.label, { color: Colors.primary }]}>Check in</Text>
+                    <Ionicons name="qr-code-outline" size={16} color={Colors.primary} />
+                  </TouchableOpacity>
+                </>
+              )}
               {isAdmin && (
                 <>
                   <View style={styles.divider} />
