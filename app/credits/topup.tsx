@@ -13,7 +13,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '@/constants/colors';
 import { supabase } from '@/lib/supabase';
-import { KES_PER_CREDIT } from '@/constants/payments';
+import { useAppConfig, useFlag } from '@/components/AppConfigProvider';
+import { resolvePackKes } from '@/lib/appConfig';
 import { notifyCreditsChanged } from '@/lib/credits';
 import { FW, WBtn, WLabel, PageTitle, useIsDesktopWeb } from '@/components/web/kit';
 import { WebShell } from '@/components/web/WebShell';
@@ -23,26 +24,29 @@ type PayState = 'idle' | 'requesting' | 'waiting' | 'success' | 'failed';
 const POLL_INTERVAL_MS = 3000;
 const POLL_TIMEOUT_MS = 120_000; // STK prompts expire after ~60-90s
 
-const CREDIT_PACKS = [
-  { credits: 10, kes: 10 * KES_PER_CREDIT, label: null },
-  { credits: 25, kes: 25 * KES_PER_CREDIT, label: null },
-  { credits: 50, kes: Math.round(50 * KES_PER_CREDIT * 0.95), label: '5% off' },
-  { credits: 100, kes: Math.round(100 * KES_PER_CREDIT * 0.9), label: '10% off' },
-] as const;
-
 const PAYMENT_METHODS = [
   { id: 'mpesa', label: 'M-Pesa', icon: 'phone-portrait-outline' },
   { id: 'card', label: 'Card', icon: 'card-outline' },
 ] as const;
 
-// Payments are temporarily disabled. While false, the top-up screen renders a
-// "coming soon" state and the M-Pesa flow below is unreachable. Flip to true to
-// restore top-ups — no other change needed.
-const PAYMENTS_ENABLED = false;
-
 export default function TopUpScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+
+  // Pricing, packs, and the payments master switch are all remote-configurable
+  // (public.app_config) so they can change without an app update. Flip
+  // payments_live to true in the admin config to restore top-ups.
+  const config = useAppConfig();
+  const KES_PER_CREDIT = config.kes_per_credit;
+  const PAYMENTS_ENABLED = config.payments_live;
+  const CREDIT_PACKS = config.credit_packs.map((p) => ({
+    credits: p.credits,
+    kes: resolvePackKes(p, config.kes_per_credit),
+    label: p.label ?? null,
+  }));
+  // Card payments aren't wired up yet — hide the option from config when not ready.
+  const showCard = useFlag('show_card_payment', true);
+  const paymentMethods = PAYMENT_METHODS.filter((m) => m.id !== 'card' || showCard);
 
   const [selectedPack, setSelectedPack] = useState<number | null>(0);
   const [customAmount, setCustomAmount] = useState('');
@@ -286,7 +290,7 @@ export default function TopUpScreen() {
             <View>
               <WLabel>Payment method</WLabel>
               <View style={{ flexDirection: 'row', gap: 14, marginTop: 12, maxWidth: 560 }}>
-                {PAYMENT_METHODS.map((m) => {
+                {paymentMethods.map((m) => {
                   const active = paymentMethod === m.id;
                   return (
                     <TouchableOpacity

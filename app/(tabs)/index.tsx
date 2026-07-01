@@ -11,6 +11,8 @@ import type { Event } from '@/lib/mockData';
 import { Ionicons } from '@expo/vector-icons';
 import { FW, WBtn, WGhostBtn, WTag, StatBlock, MetaRow, PageTitle, useIsDesktopWeb } from '@/components/web/kit';
 import { WEventCard } from '@/components/web/WEventCard';
+import { PromoBanner } from '@/components/PromoBanner';
+import { useContent } from '@/components/AppConfigProvider';
 
 function HeaderAvatar({ profile }: { profile: Profile | null }) {
   if (!profile) {
@@ -80,6 +82,9 @@ export default function HomeScreen() {
     : '…';
 
   const isDesktop = useIsDesktopWeb();
+  // Remote-editable copy (public.app_config.content) with baked-in fallbacks.
+  const welcomeLabel = useContent('home_welcome_label', 'Welcome back');
+  const noBookingsText = useContent('home_no_bookings', 'No upcoming bookings');
 
   if (isDesktop) {
     const nextBooking = bookings[0];
@@ -100,6 +105,8 @@ export default function HomeScreen() {
           <StatBlock label="Events available" value={events.length} />
           <StatBlock label="Credit balance" value={profile?.credits ?? 0} suffix="cr" />
         </View>
+
+        <PromoBanner />
 
         {nextEv && nextBooking ? (
           <View style={desktopStyles.hero}>
@@ -160,7 +167,7 @@ export default function HomeScreen() {
         <View style={styles.headerLeft}>
           <HeaderAvatar profile={profile} />
           <View>
-            <Text style={styles.welcomeLabel}>Welcome back</Text>
+            <Text style={styles.welcomeLabel}>{welcomeLabel}</Text>
             <Text style={styles.welcomeName}>{firstName}</Text>
           </View>
         </View>
@@ -169,6 +176,8 @@ export default function HomeScreen() {
           <Text style={styles.creditsValue}>{profile?.credits ?? 0} Credits</Text>
         </View>
       </View>
+
+      <PromoBanner />
 
       {/* Upcoming Events */}
       <View style={styles.sectionHeader}>
@@ -198,7 +207,7 @@ export default function HomeScreen() {
 
       {bookings.length === 0 ? (
         <View style={styles.emptyBookings}>
-          <Text style={styles.emptyText}>No upcoming bookings</Text>
+          <Text style={styles.emptyText}>{noBookingsText}</Text>
         </View>
       ) : (
         bookings.map((booking) => {

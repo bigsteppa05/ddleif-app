@@ -6,6 +6,8 @@ import { setupNotifications, addNotificationResponseListener } from '@/lib/notif
 import { Colors } from '@/constants/colors';
 import { DEV_BYPASS_AUTH } from '@/constants/dev';
 import { CookieConsent } from '@/components/CookieConsent';
+import { AppConfigProvider } from '@/components/AppConfigProvider';
+import { useOTAUpdates } from '@/lib/useOTAUpdates';
 
 export default function RootLayout() {
   const router = useRouter();
@@ -19,6 +21,9 @@ export default function RootLayout() {
     typeof window === 'undefined' ? false : null
   );
   const responseListener = useRef<{ remove: () => void } | null>(null);
+
+  // Keep native production builds on the latest OTA bundle (no-op on web/dev).
+  useOTAUpdates();
 
   useEffect(() => { pathnameRef.current = pathname; }, [pathname]);
 
@@ -75,7 +80,7 @@ export default function RootLayout() {
   }
 
   return (
-    <>
+    <AppConfigProvider>
     <Stack
       screenOptions={{
         headerShown: false,
@@ -110,6 +115,6 @@ export default function RootLayout() {
       </Stack.Protected>
     </Stack>
     <CookieConsent />
-    </>
+    </AppConfigProvider>
   );
 }

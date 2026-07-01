@@ -97,6 +97,7 @@ export default function AdminHomeScreen() {
                 params: { eventId: target.id, eventTitle: target.title, eventDate: formatDateTime(target.date, target.time), total: String(target.slots_available) },
               });
             }} />,
+            <WGhostBtn key="config" label="Config" icon="settings-outline" onPress={() => router.push('/admin/config')} />,
             <WBtn key="add" label="Add Event" icon="add" onPress={() => router.push('/admin/add-event')} />,
           ]}
         />
@@ -225,6 +226,13 @@ export default function AdminHomeScreen() {
             activeOpacity={0.85}
           >
             <Ionicons name="qr-code-outline" size={18} color={Colors.primary} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.usersButton}
+            onPress={() => router.push('/admin/config')}
+            activeOpacity={0.85}
+          >
+            <Ionicons name="settings-outline" size={18} color={Colors.textPrimary} />
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.addButton}

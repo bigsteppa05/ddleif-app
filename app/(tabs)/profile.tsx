@@ -8,7 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { getNotificationPermissionStatus, requestNotificationPermission } from '@/lib/notifications';
 import { Colors } from '@/constants/colors';
-import { KES_PER_CREDIT } from '@/constants/payments';
+import { useAppConfig } from '@/components/AppConfigProvider';
 import { supabase, getUserProfile, checkIsAdmin, updateProfile, type Profile } from '@/lib/supabase';
 import { GENDERS, COUNTRIES } from '@/lib/options';
 import { FW, WBtn, WGhostBtn, WAvatar, PageTitle, useIsDesktopWeb } from '@/components/web/kit';
@@ -170,6 +170,8 @@ export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const isDesktop = useIsDesktopWeb();
+  const config = useAppConfig();
+  const paymentsLive = config.payments_live;
   const [notifications, setNotifications] = useState(false);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -343,9 +345,9 @@ export default function ProfileScreen() {
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontSize: 15.5, fontWeight: '800', color: FW.text }}>{profile?.credits ?? 0} credits</Text>
-                  <Text style={{ fontSize: 12.5, color: FW.sec, marginTop: 2 }}>1 credit = KES {KES_PER_CREDIT}</Text>
+                  <Text style={{ fontSize: 12.5, color: FW.sec, marginTop: 2 }}>1 credit = KES {config.kes_per_credit}</Text>
                 </View>
-                <WBtn label="Coming soon" size="sm" onPress={() => router.push('/credits/topup')} />
+                <WBtn label={paymentsLive ? 'Top up' : 'Coming soon'} size="sm" onPress={() => router.push('/credits/topup')} />
               </View>
             </View>
 
@@ -364,7 +366,7 @@ export default function ProfileScreen() {
                 />
               </WebSettingsGroup>
               <WebSettingsGroup title="Credits">
-                <WebSettingsRow label="Top up credits (coming soon)" onPress={() => router.push('/credits/topup')} />
+                <WebSettingsRow label={paymentsLive ? 'Top up credits' : 'Top up credits (coming soon)'} onPress={() => router.push('/credits/topup')} />
                 <WebSettingsRow label="Transaction history" onPress={() => router.push('/credits/history')} last />
               </WebSettingsGroup>
               {(isAdmin || profile?.can_check_in) && (

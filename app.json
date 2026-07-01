@@ -7,6 +7,14 @@
     "scheme": "fitxball",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "enabled": true,
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0
+    },
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
@@ -40,6 +48,18 @@
         "expo-notifications",
         {
           "color": "#C8FF00"
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "fitXball uses the camera to scan entry QR codes when checking players in at events."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "fitXball needs access to your photos so you can set your profile picture and upload event images."
         }
       ],
       "expo-web-browser"
