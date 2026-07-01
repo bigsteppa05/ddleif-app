@@ -11,8 +11,13 @@ export default function RootLayout() {
   const router = useRouter();
   const pathname = usePathname();
   const pathnameRef = useRef(pathname);
-  // null = still checking the stored session
-  const [isLoggedIn, setIsLoggedIn] = useState<boolean | null>(null);
+  // null = still checking the stored session (client only). During web static
+  // pre-rendering there is no `window` and no session to check, so start as
+  // logged-out — otherwise the loading gate below would render a spinner for
+  // every route and no public content (legal, events) would reach the HTML.
+  const [isLoggedIn, setIsLoggedIn] = useState<boolean | null>(
+    typeof window === 'undefined' ? false : null
+  );
   const responseListener = useRef<{ remove: () => void } | null>(null);
 
   useEffect(() => { pathnameRef.current = pathname; }, [pathname]);

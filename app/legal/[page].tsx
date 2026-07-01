@@ -1,5 +1,6 @@
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import Head from 'expo-router/head';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '@/constants/colors';
@@ -127,13 +128,28 @@ const DOCS: Record<string, LegalDoc> = {
   },
 };
 
+// Tells the web static exporter which legal pages to prerender as real HTML
+// files (dist/legal/privacy.html etc.) — required because [page] is dynamic.
+// The content in DOCS is synchronous, so the full text lands in the HTML source
+// (what Google's no-JS verification fetcher reads).
+export async function generateStaticParams(): Promise<{ page: string }[]> {
+  return Object.keys(DOCS).map((page) => ({ page }));
+}
+
 export default function LegalScreen() {
   const { page } = useLocalSearchParams<{ page: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const doc = DOCS[page ?? ''] ?? DOCS.terms;
+  const slug = page && DOCS[page] ? page : 'terms';
+  const doc = DOCS[slug];
 
   return (
+    <>
+    <Head>
+      <title>{`${doc.title} | fitXball`}</title>
+      <meta name="description" content={doc.intro.slice(0, 160)} />
+      <link rel="canonical" href={`https://fitxball.com/legal/${slug}`} />
+    </Head>
     <ScrollView
       style={styles.container}
       contentContainerStyle={[styles.content, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 48 }]}
@@ -155,6 +171,7 @@ export default function LegalScreen() {
         Questions about this document? Email support@fitxball.com.
       </Text>
     </ScrollView>
+    </>
   );
 }
 
