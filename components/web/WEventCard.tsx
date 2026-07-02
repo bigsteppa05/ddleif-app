@@ -3,10 +3,14 @@ import React from 'react';
 import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
 import { FW, WTag, MetaRow } from './kit';
 import type { Event } from '@/lib/mockData';
+import { useFlag } from '@/components/AppConfigProvider';
 
 export function WEventCard({ event, onPress }: { event: Event; onPress?: () => void }) {
+  const hideAttendees = useFlag('hide_attendees');
+  const flagSoldOut = useFlag('booking_sold_out');
   const slotsLeft = event.slots_available - event.slots_booked;
-  const soldOut = slotsLeft <= 0;
+  // Sold out when genuinely full OR admin-forced via the booking_sold_out flag.
+  const soldOut = slotsLeft <= 0 || flagSoldOut;
   return (
     <Pressable
       onPress={onPress}
@@ -37,12 +41,16 @@ export function WEventCard({ event, onPress }: { event: Event; onPress?: () => v
           <MetaRow icon="location-outline" size={13.5}>{event.location}</MetaRow>
         </View>
         <View style={styles.footer}>
-          <Text style={{
-            fontSize: 13, fontWeight: '700',
-            color: soldOut ? FW.error : slotsLeft <= 3 ? FW.primary : FW.sec,
-          }}>
-            {soldOut ? 'Fully booked' : `${slotsLeft} slots left`}
-          </Text>
+          {hideAttendees && !soldOut ? (
+            <View />
+          ) : (
+            <Text style={{
+              fontSize: 13, fontWeight: '700',
+              color: soldOut ? FW.error : slotsLeft <= 3 ? FW.primary : FW.sec,
+            }}>
+              {soldOut ? 'Fully booked' : `${slotsLeft} slots left`}
+            </Text>
+          )}
           <Text style={{ fontSize: 14.5, fontWeight: '800', color: FW.text }}>
             {event.is_free ? 'Free' : <>{event.cost_in_credits} <Text style={{ fontSize: 12, fontWeight: '600', color: FW.muted }}>cr</Text></>}
           </Text>

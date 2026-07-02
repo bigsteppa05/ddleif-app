@@ -13,6 +13,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '@/constants/colors';
 import { getEventParticipants, type EventParticipant } from '@/lib/supabase';
+import { useFlag } from '@/components/AppConfigProvider';
 import { FW, useIsDesktopWeb } from '@/components/web/kit';
 import { WebShell } from '@/components/web/WebShell';
 
@@ -56,17 +57,55 @@ export default function ParticipantsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const isDesktop = useIsDesktopWeb();
+  // Admin can hide the attendee list app-wide via app_config feature flags.
+  const hideAttendees = useFlag('hide_attendees');
   const [participants, setParticipants] = useState<EventParticipant[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (hideAttendees) { setLoading(false); return; }
     getEventParticipants(eventId).then((data) => {
       setParticipants(data);
       setLoading(false);
     });
-  }, [eventId]);
+  }, [eventId, hideAttendees]);
 
   const count = participants.length;
+
+  // When hidden, don't reveal the list or the count on this screen either.
+  if (hideAttendees) {
+    const back = (
+      <TouchableOpacity
+        style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 20 }}
+        onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)/book'))}
+      >
+        <Ionicons name="arrow-back" size={18} color={FW.sec} />
+        <Text style={{ fontSize: 14, fontWeight: '600', color: FW.sec }}>Back</Text>
+      </TouchableOpacity>
+    );
+    const message = (
+      <View style={{ paddingTop: 60, alignItems: 'center', gap: 12 }}>
+        <Ionicons name="eye-off-outline" size={30} color={Colors.textMuted} />
+        <Text style={{ color: Colors.textSecondary, fontSize: 14.5, textAlign: 'center' }}>
+          The participant list isn't available for this event.
+        </Text>
+      </View>
+    );
+    if (isDesktop) {
+      return <WebShell padTop={36}>{back}{message}</WebShell>;
+    }
+    return (
+      <View style={[styles.container, { paddingTop: insets.top + 12 }]}>
+        <View style={styles.header}>
+          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+            <Ionicons name="arrow-back" size={20} color={Colors.textPrimary} />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Participants</Text>
+        </View>
+        {message}
+      </View>
+    );
+  }
 
   if (isDesktop) {
     return (

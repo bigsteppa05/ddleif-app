@@ -5,11 +5,14 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 import { Colors } from '@/constants/colors';
 import type { Event } from '@/lib/mockData';
 import { formatDateTime } from '@/lib/events';
+import { useFlag } from '@/components/AppConfigProvider';
 
 type Props = { event: Event; index?: number };
 
 export function EventCard({ event, index = 0 }: Props) {
   const router = useRouter();
+  const hideAttendees = useFlag('hide_attendees');
+  const soldOut = useFlag('booking_sold_out');
   const slotsLeft = event.slots_available - event.slots_booked;
   const isFull = slotsLeft === 0;
 
@@ -53,9 +56,13 @@ export function EventCard({ event, index = 0 }: Props) {
               <Ionicons name="location-outline" size={13} color={Colors.textSecondary} />
               <Text style={styles.metaTruncated} numberOfLines={1}>{event.location}</Text>
             </View>
-            <Text style={[styles.slots, isFull && styles.slotsFull]}>
-              {slotsLeft} of {event.slots_available} free
-            </Text>
+            {soldOut ? (
+              <Text style={[styles.slots, styles.slotsFull]}>Sold out</Text>
+            ) : hideAttendees ? null : (
+              <Text style={[styles.slots, isFull && styles.slotsFull]}>
+                {slotsLeft} of {event.slots_available} free
+              </Text>
+            )}
           </View>
         </View>
       </TouchableOpacity>

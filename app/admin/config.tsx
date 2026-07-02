@@ -17,6 +17,21 @@ import { notify } from '@/lib/ui';
 import { useAppConfig, useRefreshAppConfig } from '@/components/AppConfigProvider';
 import { updateAppConfig, type AppBanner, type CreditPack } from '@/lib/appConfig';
 
+// First-class event controls surfaced as labelled toggles (rather than raw flag
+// keys). These map to entries in app_config.feature_flags read via useFlag().
+const EVENT_FLAGS: { key: string; label: string; sub: string }[] = [
+  {
+    key: 'hide_attendees',
+    label: 'Hide attendees',
+    sub: "Hides the participant list and 'going' counts across the app.",
+  },
+  {
+    key: 'booking_sold_out',
+    label: 'Booking sold out',
+    sub: "Shows 'Sold out' and disables the Book button on all events.",
+  },
+];
+
 // Small labelled toggle pill.
 function Toggle({ on, onPress }: { on: boolean; onPress: () => void }) {
   return (
@@ -141,18 +156,44 @@ export default function AdminConfigScreen() {
         </View>
       </Section>
 
-      {/* Feature flags */}
-      <Section title="Feature flags">
-        {Object.keys(flags).length === 0 && <Text style={styles.empty}>No flags yet.</Text>}
-        {Object.entries(flags).map(([name, on], i, arr) => (
-          <View key={name}>
+      {/* Event controls — first-class labelled toggles */}
+      <Section title="Event controls">
+        {EVENT_FLAGS.map((f, i) => (
+          <View key={f.key}>
+            {i > 0 && <View style={styles.divider} />}
             <View style={styles.row}>
-              <Text style={styles.rowLabel}>{name}</Text>
-              <Toggle on={on} onPress={() => setFlags((f) => ({ ...f, [name]: !f[name] }))} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.rowLabel}>{f.label}</Text>
+                <Text style={styles.rowSub}>{f.sub}</Text>
+              </View>
+              <Toggle
+                on={!!flags[f.key]}
+                onPress={() => setFlags((prev) => ({ ...prev, [f.key]: !prev[f.key] }))}
+              />
             </View>
-            {i < arr.length - 1 && <View style={styles.divider} />}
           </View>
         ))}
+      </Section>
+
+      {/* Other feature flags (raw keys) */}
+      <Section title="Other feature flags">
+        {(() => {
+          const known = new Set(EVENT_FLAGS.map((f) => f.key));
+          const extra = Object.entries(flags).filter(([name]) => !known.has(name));
+          return extra.length === 0 ? (
+            <Text style={styles.empty}>No other flags.</Text>
+          ) : (
+            extra.map(([name, on], i, arr) => (
+              <View key={name}>
+                <View style={styles.row}>
+                  <Text style={styles.rowLabel}>{name}</Text>
+                  <Toggle on={on} onPress={() => setFlags((f) => ({ ...f, [name]: !f[name] }))} />
+                </View>
+                {i < arr.length - 1 && <View style={styles.divider} />}
+              </View>
+            ))
+          );
+        })()}
         <View style={styles.addRow}>
           <TextInput
             style={styles.addInput}

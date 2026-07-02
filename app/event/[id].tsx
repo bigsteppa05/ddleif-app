@@ -36,6 +36,7 @@ import { notifyCreditsChanged } from '@/lib/credits';
 import { openGoogleMaps, hasMapsChooser, type MapsTarget } from '@/lib/maps';
 import { shareEventCard, shareEventLink } from '@/lib/shareCard';
 import { MapsChooser } from '@/components/MapsChooser';
+import { useFlag } from '@/components/AppConfigProvider';
 import { FW, WBtn, WGhostBtn, WTag, useIsDesktopWeb } from '@/components/web/kit';
 import { WebShell } from '@/components/web/WebShell';
 
@@ -66,6 +67,12 @@ export default function EventDetailScreen() {
   const [bookError, setBookError] = useState('');
   const [participants, setParticipants] = useState<EventParticipant[]>([]);
   const [mapsChooserVisible, setMapsChooserVisible] = useState(false);
+
+  // Admin-toggled runtime flags (public.app_config → feature_flags):
+  //  hide_attendees   → hide participant lists + "going" counts everywhere
+  //  booking_sold_out → force a "Sold out" state and disable booking
+  const hideAttendees = useFlag('hide_attendees');
+  const soldOut = useFlag('booking_sold_out');
   const [shareOpen, setShareOpen] = useState(false);
   const [shareBusy, setShareBusy] = useState(false);
 
@@ -119,6 +126,8 @@ export default function EventDetailScreen() {
 
   async function handleBook() {
     if (!event) return;
+    // Admin disabled booking for this event (sold out / players list already set).
+    if (soldOut) return;
     // Public page: signed-out visitors can view the event but must sign in to book.
     if (!userId) {
       router.push('/(auth)/welcome');
@@ -319,19 +328,26 @@ export default function EventDetailScreen() {
   }
 
   const slotsLeft = event.slots_available - event.slots_booked;
-  const slotsFraction = event.slots_available > 0 ? event.slots_booked / event.slots_available : 0;
   const isFull = event.slots_booked >= event.slots_available;
+  // When admin marks the event sold out, present it exactly like a full event.
+  const blockBooking = isFull || soldOut;
+  const slotsFraction = blockBooking
+    ? 1
+    : event.slots_available > 0
+      ? event.slots_booked / event.slots_available
+      : 0;
 
   function getButtonLabel() {
     if (isMockEvent) return 'Demo Event';
     if (isBooked) return 'Booked ✓';
+    if (soldOut) return 'Sold out';
     if (isFull) return 'Fully Booked';
     if (!userId) return 'Sign in to Book';
     return 'Book Now';
   }
 
   // Signed-out visitors can press Book — handleBook sends them to sign in.
-  const buttonDisabled = isMockEvent || isBooked || isFull || bookingLoading;
+  const buttonDisabled = isMockEvent || isBooked || blockBooking || bookingLoading;
 
   // ── SEO: per-event metadata + SportsEvent structured data ──────────────────
   // Rendered into the document <head> on web. Googlebot executes JS and indexes
@@ -368,7 +384,7 @@ export default function EventDetailScreen() {
       url: eventUrl,
       price: String(priceKes),
       priceCurrency: 'KES',
-      availability: isFull ? 'https://schema.org/SoldOut' : 'https://schema.org/InStock',
+      availability: blockBooking ? 'https://schema.org/SoldOut' : 'https://schema.org/InStock',
     },
   };
   const eventHead = (
@@ -525,15 +541,17 @@ export default function EventDetailScreen() {
             {/* Slots bar */}
             <View>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
-                <Text style={{ fontSize: 13, fontWeight: '700', color: isFull ? FW.error : FW.primary }}>
-                  {isFull ? 'Fully booked' : `${slotsLeft} of ${event.slots_available} slots left`}
+                <Text style={{ fontSize: 13, fontWeight: '700', color: blockBooking ? FW.error : FW.primary }}>
+                  {soldOut ? 'Sold out' : isFull ? 'Fully booked' : `${slotsLeft} of ${event.slots_available} slots left`}
                 </Text>
-                <Text style={{ fontSize: 13, color: FW.muted }}>{event.slots_booked} going</Text>
+                {!hideAttendees && (
+                  <Text style={{ fontSize: 13, color: FW.muted }}>{event.slots_booked} going</Text>
+                )}
               </View>
               <View style={{ height: 6, borderRadius: 3, backgroundColor: FW.surfaceEl, overflow: 'hidden' }}>
                 <View style={{
                   width: `${Math.round(slotsFraction * 100)}%`, height: '100%', borderRadius: 3,
-                  backgroundColor: isFull ? FW.error : FW.primary,
+                  backgroundColor: blockBooking ? FW.error : FW.primary,
                 }} />
               </View>
             </View>
@@ -577,12 +595,14 @@ export default function EventDetailScreen() {
                   </Text>
                 </TouchableOpacity>
               </View>
-            ) : isFull && !isBooked ? (
+            ) : blockBooking && !isBooked ? (
               <View style={{
                 alignItems: 'center', justifyContent: 'center',
                 backgroundColor: FW.surfaceEl, borderRadius: 999, paddingVertical: 15,
               }}>
-                <Text style={{ color: FW.muted, fontSize: 15.5, fontWeight: '800' }}>Fully Booked</Text>
+                <Text style={{ color: FW.muted, fontSize: 15.5, fontWeight: '800' }}>
+                  {soldOut ? 'Sold out' : 'Fully Booked'}
+                </Text>
               </View>
             ) : bookingLoading ? (
               <View style={{ alignItems: 'center', paddingVertical: 16 }}>
@@ -680,20 +700,22 @@ export default function EventDetailScreen() {
         <View style={styles.card}>
           <View style={styles.availRow}>
             <Text style={styles.cardTitle}>Availability</Text>
-            <Text style={[styles.slotsCount, isFull && styles.slotsFull]}>
-              {isFull ? 'Full' : `${slotsLeft} slots free`}
+            <Text style={[styles.slotsCount, blockBooking && styles.slotsFull]}>
+              {soldOut ? 'Sold out' : isFull ? 'Full' : `${slotsLeft} slots free`}
             </Text>
           </View>
           <View style={styles.progressBar}>
             <View style={[styles.progressFill, { width: `${slotsFraction * 100}%` }]} />
           </View>
-          <Text style={styles.participantsText}>
-            Participants ({event.slots_booked})
-          </Text>
+          {!hideAttendees && (
+            <Text style={styles.participantsText}>
+              Participants ({event.slots_booked})
+            </Text>
+          )}
         </View>
 
         {/* Participants preview */}
-        {event.slots_booked > 0 && (
+        {!hideAttendees && event.slots_booked > 0 && (
           <TouchableOpacity
             style={[styles.card, styles.participantsPreview]}
             activeOpacity={0.8}
@@ -778,7 +800,7 @@ export default function EventDetailScreen() {
                 styles.bookButton,
                 bookAnimStyle,
                 buttonDisabled && styles.bookButtonDisabled,
-                isFull && styles.bookButtonFull,
+                blockBooking && styles.bookButtonFull,
               ]}
               activeOpacity={1}
               onPressIn={() => { if (!buttonDisabled) bookScale.value = withSpring(0.96, { duration: 120 }); }}
