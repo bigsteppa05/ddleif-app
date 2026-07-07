@@ -35,6 +35,10 @@ yarn-error.*
 .env.local
 .env*.local
 
+# store signing / service-account keys — never commit
+google-play-key.json
+*.keystore
+
 # typescript
 *.tsbuildinfo
 

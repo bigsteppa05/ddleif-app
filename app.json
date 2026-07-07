@@ -16,11 +16,6 @@
       "fallbackToCacheTimeout": 0,
       "url": "https://u.expo.dev/67fe4d76-0066-4b85-a3df-45724b83531a"
     },
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#012E3F"
-    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.fitxball.app"
@@ -63,7 +58,16 @@
           "photosPermission": "fitXball needs access to your photos so you can set your profile picture and upload event images."
         }
       ],
-      "expo-web-browser"
+      "expo-web-browser",
+      "expo-font",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#012E3F"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true
