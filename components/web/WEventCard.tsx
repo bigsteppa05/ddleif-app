@@ -3,11 +3,13 @@ import React from 'react';
 import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
 import { FW, WTag, MetaRow } from './kit';
 import type { Event } from '@/lib/mockData';
+import { isEventPast } from '@/lib/events';
 import { useFlag } from '@/components/AppConfigProvider';
 
 export function WEventCard({ event, onPress }: { event: Event; onPress?: () => void }) {
   const hideAttendees = useFlag('hide_attendees');
   const flagSoldOut = useFlag('booking_sold_out');
+  const isPast = isEventPast(event);
   const slotsLeft = event.slots_available - event.slots_booked;
   // Sold out when genuinely full OR admin-forced via the booking_sold_out flag.
   const soldOut = slotsLeft <= 0 || flagSoldOut;
@@ -16,7 +18,7 @@ export function WEventCard({ event, onPress }: { event: Event; onPress?: () => v
       onPress={onPress}
       style={({ hovered }) => [
         styles.card,
-        { borderColor: hovered ? '#3A3A3A' : FW.border, opacity: soldOut ? 0.92 : 1 },
+        { borderColor: hovered ? '#3A3A3A' : FW.border, opacity: isPast ? 0.7 : soldOut ? 0.92 : 1 },
       ]}
     >
       <View style={{ position: 'relative' }}>
@@ -26,8 +28,8 @@ export function WEventCard({ event, onPress }: { event: Event; onPress?: () => v
           <View style={[styles.image, { backgroundColor: FW.surfaceEl }]} />
         )}
         <View style={{ position: 'absolute', top: 12, left: 12, flexDirection: 'row', gap: 8 }}>
-          <WTag label={event.sport} tone={soldOut ? 'dark' : 'lime'} />
-          {soldOut && <WTag label="Sold out" tone="red" />}
+          <WTag label={event.sport} tone={soldOut || isPast ? 'dark' : 'lime'} />
+          {isPast ? <WTag label="Passed" tone="dark" /> : soldOut && <WTag label="Sold out" tone="red" />}
         </View>
       </View>
       <View style={styles.body}>
@@ -41,7 +43,9 @@ export function WEventCard({ event, onPress }: { event: Event; onPress?: () => v
           <MetaRow icon="location-outline" size={13.5}>{event.location}</MetaRow>
         </View>
         <View style={styles.footer}>
-          {hideAttendees && !soldOut ? (
+          {isPast ? (
+            <Text style={{ fontSize: 13, fontWeight: '700', color: FW.muted }}>Event ended</Text>
+          ) : hideAttendees && !soldOut ? (
             <View />
           ) : (
             <Text style={{

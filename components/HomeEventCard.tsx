@@ -4,17 +4,18 @@ import { Ionicons } from '@expo/vector-icons';
 import Animated, { SlideInRight } from 'react-native-reanimated';
 import { Colors } from '@/constants/colors';
 import type { Event } from '@/lib/mockData';
-import { formatDateTime } from '@/lib/events';
+import { formatDateTime, isEventPast } from '@/lib/events';
 
 type Props = { event: Event; index?: number };
 
 export function HomeEventCard({ event, index = 0 }: Props) {
   const router = useRouter();
+  const isPast = isEventPast(event);
 
   return (
     <Animated.View entering={SlideInRight.delay(index * 70).duration(260)}>
       <TouchableOpacity
-        style={styles.card}
+        style={[styles.card, isPast && styles.cardPast]}
         activeOpacity={0.9}
         onPress={() => router.push(`/event/${event.slug ?? event.id}`)}
       >
@@ -23,6 +24,11 @@ export function HomeEventCard({ event, index = 0 }: Props) {
         ) : (
           <View style={[styles.image, styles.imageFallback]}>
             <Ionicons name="image-outline" size={32} color={Colors.textMuted} />
+          </View>
+        )}
+        {isPast && (
+          <View style={styles.pastBadge}>
+            <Text style={styles.pastBadgeText}>Passed</Text>
           </View>
         )}
         <View style={styles.body}>
@@ -52,6 +58,24 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     overflow: 'hidden',
     marginRight: 12,
+  },
+  cardPast: {
+    opacity: 0.7,
+  },
+  pastBadge: {
+    position: 'absolute',
+    top: 10,
+    left: 10,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    borderRadius: 8,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+  },
+  pastBadgeText: {
+    color: Colors.textPrimary,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.3,
   },
   image: {
     width: '100%',

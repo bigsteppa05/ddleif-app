@@ -9,7 +9,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '@/constants/colors';
 import { EventCard } from '@/components/EventCard';
 import { supabase, getUserBookings, type BookingWithEvent } from '@/lib/supabase';
-import { getDisplayEvents, normalizeEvent, formatDateTime } from '@/lib/events';
+import { getDisplayEvents, normalizeEvent, formatDateTime, sortEventsForDisplay } from '@/lib/events';
 import type { Event } from '@/lib/mockData';
 import { FW, WChip, PageTitle, useIsDesktopWeb } from '@/components/web/kit';
 import { WEventCard } from '@/components/web/WEventCard';
@@ -62,8 +62,9 @@ export default function BookScreen() {
     useCallback(() => {
       setEventsLoading(true);
       getDisplayEvents().then((data) => {
-        setEvents(data);
-        setDisplayedEvents(data);
+        const ordered = sortEventsForDisplay(data);
+        setEvents(ordered);
+        setDisplayedEvents(ordered);
         setEventsLoading(false);
       });
 

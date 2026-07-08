@@ -6,7 +6,7 @@ import * as SecureStore from 'expo-secure-store';
 import { Colors } from '@/constants/colors';
 import { HomeEventCard } from '@/components/HomeEventCard';
 import { supabase, getUserProfile, getUserBookings, type Profile, type BookingWithEvent } from '@/lib/supabase';
-import { getDisplayEvents, normalizeEvent, formatDateTime } from '@/lib/events';
+import { getDisplayEvents, normalizeEvent, formatDateTime, sortEventsForDisplay } from '@/lib/events';
 import type { Event } from '@/lib/mockData';
 import { Ionicons } from '@expo/vector-icons';
 import { FW, WBtn, WGhostBtn, WTag, StatBlock, MetaRow, PageTitle, useIsDesktopWeb } from '@/components/web/kit';
@@ -55,7 +55,7 @@ export default function HomeScreen() {
         ]);
 
         setProfile(prof);
-        setEvents(allEvents.slice(0, 5));
+        setEvents(sortEventsForDisplay(allEvents).slice(0, 5));
         setBookings(userBookings.filter((b) => (b.events?.date ?? '') >= todayISO));
 
         if (Platform.OS !== 'web') {

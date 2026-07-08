@@ -21,7 +21,7 @@ import Animated, { useSharedValue, useAnimatedStyle, withSpring } from 'react-na
 import { Colors } from '@/constants/colors';
 import { KES_PER_CREDIT } from '@/constants/payments';
 import type { Event } from '@/lib/mockData';
-import { getDisplayEvent, getDisplayEventBySlugOrId, formatDateTime } from '@/lib/events';
+import { getDisplayEvent, getDisplayEventBySlugOrId, formatDateTime, isEventPast } from '@/lib/events';
 import {
   supabase,
   checkExistingBooking,
@@ -126,8 +126,8 @@ export default function EventDetailScreen() {
 
   async function handleBook() {
     if (!event) return;
-    // Admin disabled booking for this event (sold out / players list already set).
-    if (soldOut) return;
+    // No booking for past events or admin-disabled (sold out) events.
+    if (soldOut || isEventPast(event)) return;
     // Public page: signed-out visitors can view the event but must sign in to book.
     if (!userId) {
       router.push('/(auth)/welcome');
@@ -329,9 +329,11 @@ export default function EventDetailScreen() {
 
   const slotsLeft = event.slots_available - event.slots_booked;
   const isFull = event.slots_booked >= event.slots_available;
-  // When admin marks the event sold out, present it exactly like a full event.
-  const blockBooking = isFull || soldOut;
-  const slotsFraction = blockBooking
+  const isPast = isEventPast(event);
+  // Booking is blocked for full, admin-sold-out, or past events. Past events stay
+  // fully viewable (participants, details) as history — only booking is disabled.
+  const blockBooking = isFull || soldOut || isPast;
+  const slotsFraction = isFull || soldOut
     ? 1
     : event.slots_available > 0
       ? event.slots_booked / event.slots_available
@@ -340,6 +342,7 @@ export default function EventDetailScreen() {
   function getButtonLabel() {
     if (isMockEvent) return 'Demo Event';
     if (isBooked) return 'Booked ✓';
+    if (isPast) return 'Event ended';
     if (soldOut) return 'Sold out';
     if (isFull) return 'Fully Booked';
     if (!userId) return 'Sign in to Book';
@@ -541,8 +544,8 @@ export default function EventDetailScreen() {
             {/* Slots bar */}
             <View>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
-                <Text style={{ fontSize: 13, fontWeight: '700', color: blockBooking ? FW.error : FW.primary }}>
-                  {soldOut ? 'Sold out' : isFull ? 'Fully booked' : `${slotsLeft} of ${event.slots_available} slots left`}
+                <Text style={{ fontSize: 13, fontWeight: '700', color: blockBooking ? (isPast ? FW.muted : FW.error) : FW.primary }}>
+                  {isPast ? 'Event ended' : soldOut ? 'Sold out' : isFull ? 'Fully booked' : `${slotsLeft} of ${event.slots_available} slots left`}
                 </Text>
                 {!hideAttendees && (
                   <Text style={{ fontSize: 13, color: FW.muted }}>{event.slots_booked} going</Text>
@@ -601,7 +604,7 @@ export default function EventDetailScreen() {
                 backgroundColor: FW.surfaceEl, borderRadius: 999, paddingVertical: 15,
               }}>
                 <Text style={{ color: FW.muted, fontSize: 15.5, fontWeight: '800' }}>
-                  {soldOut ? 'Sold out' : 'Fully Booked'}
+                  {isPast ? 'Event ended' : soldOut ? 'Sold out' : 'Fully Booked'}
                 </Text>
               </View>
             ) : bookingLoading ? (
@@ -700,8 +703,8 @@ export default function EventDetailScreen() {
         <View style={styles.card}>
           <View style={styles.availRow}>
             <Text style={styles.cardTitle}>Availability</Text>
-            <Text style={[styles.slotsCount, blockBooking && styles.slotsFull]}>
-              {soldOut ? 'Sold out' : isFull ? 'Full' : `${slotsLeft} slots free`}
+            <Text style={[styles.slotsCount, blockBooking && !isPast && styles.slotsFull]}>
+              {isPast ? 'Ended' : soldOut ? 'Sold out' : isFull ? 'Full' : `${slotsLeft} slots free`}
             </Text>
           </View>
           <View style={styles.progressBar}>

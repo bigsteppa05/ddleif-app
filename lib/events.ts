@@ -36,6 +36,33 @@ export function formatDateTime(date: string, time?: string): string {
   return `${formattedDate} · ${formattedTime}`;
 }
 
+// A match is "past" once its calendar day is over. Date-only comparison means a
+// same-day event stays bookable/upcoming through the whole day it runs. Used by the
+// event page, cards, and listings so "passed" means the same thing everywhere.
+export function isEventPast(e: { rawDate?: string } | null | undefined): boolean {
+  const raw = e?.rawDate;
+  if (!raw) return false;
+  const today = new Date().toISOString().split('T')[0];
+  return raw.split('T')[0] < today;
+}
+
+// Orders events for display: upcoming first (soonest → latest), then past events
+// as history (most recent → oldest). Keeps past events visible without letting
+// them dominate the top of the list.
+export function sortEventsForDisplay<T extends { rawDate?: string }>(events: T[]): T[] {
+  const dateOf = (e: T) => (e.rawDate ?? '').split('T')[0];
+  return [...events].sort((a, b) => {
+    const aPast = isEventPast(a);
+    const bPast = isEventPast(b);
+    if (aPast !== bPast) return aPast ? 1 : -1; // upcoming before past
+    const ad = dateOf(a);
+    const bd = dateOf(b);
+    if (ad === bd) return 0;
+    // Upcoming: ascending (soonest first). Past: descending (most recent first).
+    return aPast ? (ad < bd ? 1 : -1) : ad < bd ? -1 : 1;
+  });
+}
+
 export function normalizeEvent(e: SupabaseEvent): DisplayEvent {
   return {
     id: e.id,

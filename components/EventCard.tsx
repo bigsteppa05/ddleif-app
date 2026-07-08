@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { Colors } from '@/constants/colors';
 import type { Event } from '@/lib/mockData';
-import { formatDateTime } from '@/lib/events';
+import { formatDateTime, isEventPast } from '@/lib/events';
 import { useFlag } from '@/components/AppConfigProvider';
 
 type Props = { event: Event; index?: number };
@@ -13,13 +13,14 @@ export function EventCard({ event, index = 0 }: Props) {
   const router = useRouter();
   const hideAttendees = useFlag('hide_attendees');
   const soldOut = useFlag('booking_sold_out');
+  const isPast = isEventPast(event);
   const slotsLeft = event.slots_available - event.slots_booked;
   const isFull = slotsLeft === 0;
 
   return (
     <Animated.View entering={FadeInDown.delay(index * 60).duration(250)}>
       <TouchableOpacity
-        style={styles.card}
+        style={[styles.card, isPast && styles.cardPast]}
         activeOpacity={0.9}
         onPress={() => router.push(`/event/${event.slug ?? event.id}`)}
       >
@@ -56,7 +57,9 @@ export function EventCard({ event, index = 0 }: Props) {
               <Ionicons name="location-outline" size={13} color={Colors.textSecondary} />
               <Text style={styles.metaTruncated} numberOfLines={1}>{event.location}</Text>
             </View>
-            {soldOut ? (
+            {isPast ? (
+              <Text style={[styles.slots, styles.slotsPast]}>Passed</Text>
+            ) : soldOut ? (
               <Text style={[styles.slots, styles.slotsFull]}>Sold out</Text>
             ) : hideAttendees ? null : (
               <Text style={[styles.slots, isFull && styles.slotsFull]}>
@@ -128,5 +131,11 @@ const styles = StyleSheet.create({
   },
   slotsFull: {
     color: Colors.error,
+  },
+  slotsPast: {
+    color: Colors.textMuted,
+  },
+  cardPast: {
+    opacity: 0.7,
   },
 });
