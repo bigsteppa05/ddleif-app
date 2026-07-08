@@ -558,6 +558,39 @@ export default function EventDetailScreen() {
                 }} />
               </View>
             </View>
+            {/* Participants — avatar preview + link to full list (names) */}
+            {!hideAttendees && event.slots_booked > 0 && (
+              <>
+                <View style={{ height: 1, backgroundColor: FW.borderSoft }} />
+                <TouchableOpacity
+                  onPress={goToParticipants}
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}
+                  activeOpacity={0.7}
+                >
+                  <View style={{ flexDirection: 'row' }}>
+                    {participants.slice(0, 5).map((p, i) => (
+                      <View key={i} style={{
+                        width: 30, height: 30, borderRadius: 15, marginLeft: i ? -10 : 0,
+                        backgroundColor: FW.surfaceEl, borderWidth: 2, borderColor: FW.surface,
+                        alignItems: 'center', justifyContent: 'center', overflow: 'hidden', zIndex: 5 - i,
+                      }}>
+                        {p.avatar_url ? (
+                          <Image source={{ uri: p.avatar_url }} style={{ width: '100%', height: '100%' }} />
+                        ) : (
+                          <Text style={{ color: FW.sec, fontSize: 12, fontWeight: '800' }}>
+                            {(p.is_self ? 'Y' : p.name || p.username || '?').charAt(0).toUpperCase()}
+                          </Text>
+                        )}
+                      </View>
+                    ))}
+                  </View>
+                  <Text style={{ fontSize: 13, color: FW.sec, fontWeight: '600' }}>Who's going</Text>
+                  <View style={{ flex: 1 }} />
+                  <Text style={{ fontSize: 13, color: FW.primary, fontWeight: '700' }}>See all</Text>
+                  <Ionicons name="chevron-forward" size={15} color={FW.primary} />
+                </TouchableOpacity>
+              </>
+            )}
             <View style={{ height: 1, backgroundColor: FW.borderSoft }} />
             {/* Price */}
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
