@@ -42,8 +42,11 @@ export function formatDateTime(date: string, time?: string): string {
 export function isEventPast(e: { rawDate?: string } | null | undefined): boolean {
   const raw = e?.rawDate;
   if (!raw) return false;
-  const today = new Date().toISOString().split('T')[0];
-  return raw.split('T')[0] < today;
+  // Take the YYYY-MM-DD prefix regardless of separator — DB dates come back as
+  // "2026-07-05", "2026-07-05T..", or "2026-07-05 00:00:00+00".
+  const datePart = raw.slice(0, 10);
+  const today = new Date().toISOString().slice(0, 10);
+  return datePart < today;
 }
 
 // Orders events for display: upcoming first (soonest → latest), then past events
