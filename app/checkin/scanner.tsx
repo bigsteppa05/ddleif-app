@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   Animated,
   Platform,
+  Linking,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -64,6 +65,14 @@ export default function ScannerScreen() {
     return () => anim.stop();
   }, []);
 
+  // Prompt for camera access as soon as the scanner opens (its whole purpose),
+  // but only while the OS will still show the dialog.
+  useEffect(() => {
+    if (permission && !permission.granted && permission.canAskAgain) {
+      requestPermission();
+    }
+  }, [permission, requestPermission]);
+
   if (isDesktop) {
     return (
       <WebScanner
@@ -103,12 +112,30 @@ export default function ScannerScreen() {
   }
 
   if (!permission.granted) {
+    const permanentlyDenied = !permission.canAskAgain;
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
+        <TouchableOpacity style={{ position: 'absolute', top: insets.top + 16, left: 16 }} onPress={() => router.back()}>
+          <Ionicons name="arrow-back" size={22} color={Colors.textPrimary} />
+        </TouchableOpacity>
         <Ionicons name="camera-outline" size={48} color={Colors.textMuted} />
-        <Text style={styles.permText}>Camera access is needed to scan tickets.</Text>
-        <TouchableOpacity style={styles.permBtn} onPress={requestPermission} activeOpacity={0.85}>
-          <Text style={styles.permBtnText}>Grant Access</Text>
+        <Text style={styles.permText}>
+          {permanentlyDenied
+            ? 'Camera access is turned off. Enable it in Settings to scan entry tickets.'
+            : 'Camera access is needed to scan entry tickets.'}
+        </Text>
+        <TouchableOpacity
+          style={styles.permBtn}
+          onPress={permanentlyDenied ? () => Linking.openSettings() : requestPermission}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.permBtnText}>{permanentlyDenied ? 'Open Settings' : 'Grant Access'}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={{ marginTop: 16 }}
+          onPress={() => router.push({ pathname: '/checkin/ref-list', params: { eventId, eventTitle, eventDate } })}
+        >
+          <Text style={{ color: Colors.textSecondary, fontSize: 14, fontWeight: '600' }}>Check in manually instead</Text>
         </TouchableOpacity>
       </View>
     );

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -14,7 +14,7 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
-import { signInWithGoogle, signInWithApple } from '@/lib/socialAuth';
+import { signInWithGoogle, signInWithApple, isAppleAuthAvailable } from '@/lib/socialAuth';
 import { Colors } from '@/constants/colors';
 import { AuthShell, AuthHeading, LimeLink, WBtn, WGhostBtn, FW, useIsDesktopWeb } from '@/components/web/kit';
 import { WField } from '@/components/web/WField';
@@ -29,6 +29,14 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const [socialLoading, setSocialLoading] = useState<'google' | 'apple' | null>(null);
   const [error, setError] = useState('');
+  // Only show the Apple button where native Apple Sign In actually works.
+  const [appleAvailable, setAppleAvailable] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    isAppleAuthAvailable().then((v) => { if (mounted) setAppleAvailable(v); });
+    return () => { mounted = false; };
+  }, []);
 
   async function handlePasswordSignIn() {
     const trimmed = email.trim().toLowerCase();
@@ -265,7 +273,7 @@ export default function LoginScreen() {
             }
           </TouchableOpacity>
 
-          {Platform.OS === 'ios' && (
+          {appleAvailable && (
             <TouchableOpacity
               style={styles.socialBtn}
               onPress={handleAppleSignIn}

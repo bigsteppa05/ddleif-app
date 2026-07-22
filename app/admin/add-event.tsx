@@ -8,7 +8,6 @@ import {
   ActivityIndicator,
   ScrollView,
   Switch,
-  Alert,
   KeyboardAvoidingView,
   Platform,
   Image,
@@ -31,6 +30,7 @@ import { TimePicker } from '@/components/TimePicker';
 import { WebSelect, WebDate, WebTime } from '@/components/web/WebControls';
 import { Colors } from '@/constants/colors';
 import { notify } from '@/lib/ui';
+import { pickImageFromLibrary } from '@/lib/media';
 import { SPORTS, DURATION_OPTIONS } from '@/lib/options';
 
 const now = new Date();
@@ -186,34 +186,9 @@ export function EventForm({
   const isWeb = Platform.OS === 'web';
 
   async function pickImage() {
-    // Web: native file dialog — no picker module or permissions needed
-    if (Platform.OS === 'web') {
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = 'image/jpeg,image/png,image/webp';
-      input.onchange = () => {
-        const file = input.files?.[0];
-        if (file) set('imageUri', URL.createObjectURL(file));
-      };
-      input.click();
-      return;
-    }
-    // Native: photo gallery via expo-image-picker
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const ImagePicker = require('expo-image-picker');
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [4, 3],
-        quality: 0.85,
-      });
-      if (!result.canceled && result.assets[0]) {
-        set('imageUri', result.assets[0].uri);
-      }
-    } catch {
-      Alert.alert('Not available', 'Image picker requires a native build. Run npx expo run:ios to enable it.');
-    }
+    // Photo library (camera roll) with per-platform permission handling in lib/media.
+    const uri = await pickImageFromLibrary({ aspect: [4, 3], quality: 0.85 });
+    if (uri) set('imageUri', uri);
   }
 
   return (
