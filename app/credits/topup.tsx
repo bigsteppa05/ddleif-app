@@ -11,11 +11,13 @@ import {
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import { Colors } from '@/constants/colors';
 import { supabase } from '@/lib/supabase';
 import { useAppConfig, useFlag } from '@/components/AppConfigProvider';
 import { resolvePackKes } from '@/lib/appConfig';
 import { notifyCreditsChanged } from '@/lib/credits';
+import { track } from '@/lib/analytics';
 import { FW, WBtn, WLabel, PageTitle, useIsDesktopWeb } from '@/components/web/kit';
 import { WebShell } from '@/components/web/WebShell';
 
@@ -23,6 +25,10 @@ type PayState = 'idle' | 'requesting' | 'waiting' | 'success' | 'failed';
 
 const POLL_INTERVAL_MS = 3000;
 const POLL_TIMEOUT_MS = 120_000; // STK prompts expire after ~60-90s
+// If the callback hasn't settled the row by this point, start asking Daraja
+// directly (STK query) — the fallback for a missed/late M-Pesa callback.
+const RECONCILE_AFTER_MS = 20_000;
+const RECONCILE_EVERY_MS = 9_000;
 
 const PAYMENT_METHODS = [
   { id: 'mpesa', label: 'M-Pesa', icon: 'phone-portrait-outline' },
@@ -38,6 +44,7 @@ export default function TopUpScreen() {
   // payments_live to true in the admin config to restore top-ups.
   const config = useAppConfig();
   const KES_PER_CREDIT = config.kes_per_credit;
+  const MIN_CREDITS = config.min_credits;
   const PAYMENTS_ENABLED = config.payments_live;
   const CREDIT_PACKS = config.credit_packs.map((p) => ({
     credits: p.credits,
@@ -58,14 +65,36 @@ export default function TopUpScreen() {
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const toastSlide = useRef(new Animated.Value(80)).current;
 
-  // Prefill phone from the user's profile; clear any poll on unmount
+  // Prefill phone from the profile, and resume any payment that's still in flight
+  // (e.g. the user backgrounded the app mid-prompt). Resuming — rather than
+  // letting them tap Pay again — is a key guard against double charges.
   useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => {
+    (async () => {
+      const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
-      supabase.from('profiles').select('phone').eq('id', user.id).single()
-        .then(({ data }) => { if (data?.phone) setPhone(data.phone); });
-    });
+      const { data: prof } = await supabase.from('profiles').select('phone').eq('id', user.id).single();
+      if (prof?.phone) setPhone(prof.phone);
+
+      const { data: pending } = await supabase
+        .from('payments')
+        .select('checkout_request_id, created_at')
+        .eq('user_id', user.id)
+        .eq('status', 'pending')
+        .not('checkout_request_id', 'is', null)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (pending?.checkout_request_id) {
+        const ageMs = Date.now() - new Date(pending.created_at).getTime();
+        if (ageMs < POLL_TIMEOUT_MS) {
+          setPayState('waiting');
+          setToastMsg('Resuming your pending payment…');
+          pollPayment(pending.checkout_request_id);
+        }
+      }
+    })();
     return () => { if (pollTimer.current) clearInterval(pollTimer.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -82,34 +111,82 @@ export default function TopUpScreen() {
 
   const isCustom = selectedPack === null;
   const customCredits = parseInt(customAmount, 10);
-  const customValid = !isNaN(customCredits) && customCredits >= 5;
+  const customValid = !isNaN(customCredits) && customCredits >= MIN_CREDITS;
   const totalKes = isCustom ? (customValid ? customCredits * KES_PER_CREDIT : 0) : CREDIT_PACKS[selectedPack!].kes;
   const totalCredits = isCustom ? (customValid ? customCredits : 0) : CREDIT_PACKS[selectedPack!].credits;
   const canPay = totalKes > 0;
 
+  // When the user changes the amount after a finished attempt, return the button
+  // to its normal "Pay" state (but never interrupt an in-flight payment).
+  function resetAfterResolve() {
+    setPayState((s) => (s === 'success' || s === 'failed' ? 'idle' : s));
+  }
+
+  function settle(status: 'success' | 'failed', credits?: number, resultDesc?: string) {
+    if (pollTimer.current) clearInterval(pollTimer.current);
+    if (status === 'success') {
+      setPayState('success');
+      setToastMsg(`${credits ?? ''} credits added to your account! 🎉`.trim());
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      track('topup_succeeded', { credits });
+      notifyCreditsChanged();
+    } else {
+      setPayState('failed');
+      setToastMsg(resultDesc || 'Payment was not completed.');
+      track('topup_failed', { reason: resultDesc ?? 'unknown' });
+    }
+  }
+
+  // Ask the server to reconcile this payment against M-Pesa directly. Used as a
+  // fallback when the callback is late/missing; it settles the row idempotently.
+  async function reconcile(checkoutRequestId: string) {
+    await supabase.functions
+      .invoke('mpesa-stk-query', { body: { checkout_request_id: checkoutRequestId } })
+      .catch(() => {});
+  }
+
   function pollPayment(checkoutRequestId: string) {
     const startedAt = Date.now();
+    let lastReconcileAt = 0;
+    if (pollTimer.current) clearInterval(pollTimer.current);
     pollTimer.current = setInterval(async () => {
-      if (Date.now() - startedAt > POLL_TIMEOUT_MS) {
-        if (pollTimer.current) clearInterval(pollTimer.current);
-        setPayState('failed');
-        setToastMsg('Payment timed out. If you entered your PIN, credits will still arrive shortly.');
-        return;
-      }
+      const elapsed = Date.now() - startedAt;
+
       const { data } = await supabase
         .from('payments')
         .select('status, result_desc, credits')
         .eq('checkout_request_id', checkoutRequestId)
         .single();
-      if (!data || data.status === 'pending') return;
-      if (pollTimer.current) clearInterval(pollTimer.current);
-      if (data.status === 'success') {
-        setPayState('success');
-        setToastMsg(`${data.credits} credits added to your account! 🎉`);
-        notifyCreditsChanged();
-      } else {
-        setPayState('failed');
-        setToastMsg(data.result_desc || 'Payment was not completed.');
+
+      if (data && data.status !== 'pending') {
+        settle(data.status as 'success' | 'failed', data.credits, data.result_desc);
+        return;
+      }
+
+      // Still pending. Once the prompt window has passed, stop trusting the
+      // callback alone and ask M-Pesa directly (throttled).
+      if (elapsed > RECONCILE_AFTER_MS && Date.now() - lastReconcileAt > RECONCILE_EVERY_MS) {
+        lastReconcileAt = Date.now();
+        reconcile(checkoutRequestId);
+      }
+
+      if (elapsed > POLL_TIMEOUT_MS) {
+        if (pollTimer.current) clearInterval(pollTimer.current);
+        // One last forced reconcile, then read the final state.
+        await reconcile(checkoutRequestId);
+        const { data: final } = await supabase
+          .from('payments')
+          .select('status, result_desc, credits')
+          .eq('checkout_request_id', checkoutRequestId)
+          .single();
+        if (final?.status === 'success') {
+          settle('success', final.credits);
+        } else if (final?.status === 'failed') {
+          settle('failed', undefined, final.result_desc);
+        } else {
+          setPayState('failed');
+          setToastMsg('Still confirming your payment. If your M-Pesa was debited, your credits will appear shortly — check Credit History.');
+        }
       }
     }, POLL_INTERVAL_MS);
   }
@@ -126,17 +203,39 @@ export default function TopUpScreen() {
       return;
     }
     setPayState('requesting');
+    track('topup_started', { credits: totalCredits, kes: totalKes });
+    // Pricing is enforced server-side from app_config; we send credits + phone.
     const { data, error } = await supabase.functions.invoke('mpesa-stk-push', {
-      body: { amount: totalKes, credits: totalCredits, phone },
+      body: { credits: totalCredits, phone },
     });
-    if (error || !data?.checkout_request_id) {
+    if (error) {
       setPayState('failed');
-      setToastMsg(data?.message || 'Could not start the M-Pesa payment. Try again.');
+      setToastMsg('Could not start the payment. Please try again.');
       return;
     }
-    setPayState('waiting');
-    setToastMsg('Check your phone and enter your M-Pesa PIN…');
-    pollPayment(data.checkout_request_id);
+    // A previous top-up completed while we were away — treat as done.
+    if (data?.settled === 'success') {
+      setPayState('success');
+      setToastMsg(`${data.credits ?? ''} credits added to your account! 🎉`.trim());
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      track('topup_succeeded', { credits: data.credits });
+      notifyCreditsChanged();
+      return;
+    }
+    // A prompt is live (new or resumed) — poll it to completion.
+    if (data?.ok && data.checkout_request_id) {
+      setPayState('waiting');
+      setToastMsg(data.resumed
+        ? 'Finishing your earlier M-Pesa prompt…'
+        : 'Check your phone and enter your M-Pesa PIN…');
+      track('topup_prompt_sent', { credits: totalCredits });
+      pollPayment(data.checkout_request_id);
+      return;
+    }
+    // ok:false — a concurrent attempt is starting, or a validation/rejection.
+    // 'in_progress' is transient (not a failure), so leave the button usable.
+    setPayState(data?.code === 'in_progress' ? 'idle' : 'failed');
+    setToastMsg(data?.message || 'Could not start the M-Pesa payment. Please try again.');
   }
 
   const paying = payState === 'requesting' || payState === 'waiting';
@@ -214,7 +313,7 @@ export default function TopUpScreen() {
           <Ionicons name="arrow-back" size={16} color={FW.sec} />
           <Text style={{ fontSize: 14, fontWeight: '600', color: FW.sec }}>Profile</Text>
         </TouchableOpacity>
-        <PageTitle title="Top up credits" sub={`1 credit = KES ${KES_PER_CREDIT}. Bigger packs carry a discount.`} />
+        <PageTitle title="Top up credits" sub={`1 credit = KES ${KES_PER_CREDIT}. Minimum ${MIN_CREDITS} credits.`} />
         <View style={{ flexDirection: 'row', gap: 28, marginTop: 24, alignItems: 'flex-start' }}>
           {/* Left: packs + custom + method */}
           <View style={{ flex: 1, gap: 30 }}>
@@ -231,7 +330,7 @@ export default function TopUpScreen() {
                         borderRadius: 16, paddingVertical: 20, paddingHorizontal: 22,
                         borderWidth: 1.5, borderColor: selected ? FW.primary : FW.border,
                       }}
-                      onPress={() => { setSelectedPack(idx); setCustomAmount(''); setCustomError(''); }}
+                      onPress={() => { setSelectedPack(idx); setCustomAmount(''); setCustomError(''); resetAfterResolve(); }}
                       activeOpacity={0.8}
                     >
                       {pack.label && (
@@ -277,9 +376,9 @@ export default function TopUpScreen() {
                     setSelectedPack(null);
                   }}
                   onBlur={() => {
-                    if (customAmount && !customValid) setCustomError('Minimum 5 credits');
+                    if (customAmount && !customValid) setCustomError(`Minimum ${MIN_CREDITS} credits`);
                   }}
-                  placeholder="Minimum 5 credits"
+                  placeholder={`Minimum ${MIN_CREDITS} credits`}
                   placeholderTextColor={FW.muted}
                   keyboardType="number-pad"
                 />
@@ -401,7 +500,7 @@ export default function TopUpScreen() {
               <TouchableOpacity
                 key={idx}
                 style={[styles.packCard, selected && styles.packCardSelected]}
-                onPress={() => { setSelectedPack(idx); setCustomAmount(''); setCustomError(''); }}
+                onPress={() => { setSelectedPack(idx); setCustomAmount(''); setCustomError(''); resetAfterResolve(); }}
                 activeOpacity={0.8}
               >
                 {pack.label && (
@@ -429,10 +528,11 @@ export default function TopUpScreen() {
               setCustomAmount(v.replace(/[^0-9]/g, ''));
               setCustomError('');
               setSelectedPack(null);
+              resetAfterResolve();
             }}
             onBlur={() => {
               if (customAmount && !customValid) {
-                setCustomError('Minimum 5 credits');
+                setCustomError(`Minimum ${MIN_CREDITS} credits`);
               }
             }}
             placeholder="e.g. 200"
@@ -442,7 +542,7 @@ export default function TopUpScreen() {
           <Text style={styles.inputSuffix}>credits</Text>
         </View>
         {!!customError && <Text style={styles.errorText}>{customError}</Text>}
-        <Text style={styles.equivalenceNote}>1 credit = KES {KES_PER_CREDIT}</Text>
+        <Text style={styles.equivalenceNote}>1 credit = KES {KES_PER_CREDIT} · minimum {MIN_CREDITS} credits</Text>
 
         {/* Payment method */}
         <Text style={styles.sectionLabel}>Payment Method</Text>

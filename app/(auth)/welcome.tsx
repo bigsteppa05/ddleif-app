@@ -1,19 +1,53 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
   StyleSheet,
   Animated,
-  Platform,
-  ActivityIndicator,
+  Image,
+  ImageBackground,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
-import { signInWithGoogle, signInWithApple } from '@/lib/socialAuth';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Colors } from '@/constants/colors';
+import {
+  Wordmark,
+  PageDots,
+  useRise,
+  HERO_SEQUENCE,
+  INTRO_GRADIENT,
+  HERO_GRADIENT,
+} from '@/components/onboarding';
+import { useReducedMotion } from '@/lib/useReducedMotion';
+import { track } from '@/lib/analytics';
 import { AuthShell, AuthHeading, LimeLink, WBtn, WGhostBtn, FW, useIsDesktopWeb } from '@/components/web/kit';
+
+// ── Content ───────────────────────────────────────────────────────────────
+const INTRO_PAGES = [
+  {
+    image: HERO_SEQUENCE[0],
+    kicker: '01 · BROWSE',
+    headline: 'Browse for\na match.',
+    sub: 'We line up football, basketball and padel games all over the city. Scroll and find one that fits.',
+  },
+  {
+    image: HERO_SEQUENCE[1],
+    kicker: '02 · BOOK A SLOT',
+    headline: 'Grab your\nspot.',
+    sub: "Found a game you like? Claim a spot in a tap — it's your ticket onto the court.",
+  },
+  {
+    image: HERO_SEQUENCE[2],
+    kicker: '03 · ARRIVE & PLAY',
+    headline: 'Turn up\nand play.',
+    sub: 'Show up at the time and place. No teams to organise, no hassle — just play.',
+  },
+] as const;
+
+const SPORT_TAGS = ['FOOTBALL · GRAB A SPOT', 'BASKETBALL · GRAB A SPOT', 'PADEL · GRAB A SPOT'] as const;
+const HERO_PAGE = INTRO_PAGES.length; // index 3
 
 // ── Desktop (≥1024px web) ─────────────────────────────────────────
 function DesktopWelcome() {
@@ -56,89 +90,167 @@ const desktop = StyleSheet.create({
   statLabel: { fontSize: 12.5, color: FW.muted, marginTop: 2 },
 });
 
+// ── Hero cross-fade ───────────────────────────────────────────────
+// Three stacked photos cross-fade football → basketball → padel on a loop, each
+// with a slow zoom, mirroring the prototype's `cyc` / `zoomcyc` keyframes.
+const HOLD_MS = 4000;
+const FADE_MS = 1200;
+
+function CrossfadeHero({ index, reduced }: { index: number; reduced: boolean }) {
+  // One opacity + one scale value per layer.
+  const opacities = useRef(HERO_SEQUENCE.map((_, i) => new Animated.Value(i === 0 ? 1 : 0))).current;
+  const scales = useRef(HERO_SEQUENCE.map(() => new Animated.Value(1.02))).current;
+
+  useEffect(() => {
+    if (reduced) return; // hold a single static frame — no zoom, no cross-fade loop
+    HERO_SEQUENCE.forEach((_, i) => {
+      Animated.timing(opacities[i], {
+        toValue: i === index ? 1 : 0,
+        duration: FADE_MS,
+        useNativeDriver: true,
+      }).start();
+    });
+    // Restart the slow zoom on the newly-active layer.
+    scales[index].setValue(1.02);
+    Animated.timing(scales[index], {
+      toValue: 1.1,
+      duration: HOLD_MS + FADE_MS,
+      useNativeDriver: true,
+    }).start();
+  }, [index, reduced, opacities, scales]);
+
+  // Reduce Motion: a single still photo — no parallax zoom, no looping dissolve.
+  if (reduced) {
+    return (
+      <View style={StyleSheet.absoluteFill}>
+        <Image source={HERO_SEQUENCE[0]} resizeMode="cover" style={StyleSheet.absoluteFill} />
+      </View>
+    );
+  }
+
+  return (
+    <View style={StyleSheet.absoluteFill}>
+      {HERO_SEQUENCE.map((src, i) => (
+        <Animated.Image
+          key={i}
+          source={src}
+          resizeMode="cover"
+          style={[StyleSheet.absoluteFill, { opacity: opacities[i], transform: [{ scale: scales[i] }] }]}
+        />
+      ))}
+    </View>
+  );
+}
+
 // ── Mobile ────────────────────────────────────────────────────────
 function MobileWelcome() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const [expanded, setExpanded] = useState(false);
-  const [socialLoading, setSocialLoading] = useState<'google' | 'apple' | null>(null);
-  const slideAnim = useRef(new Animated.Value(120)).current;
-  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const [page, setPage] = useState(0);
+  const [heroIndex, setHeroIndex] = useState(0);
+  const reduced = useReducedMotion();
+  const rise = useRise(page);
 
-  function handleGetStarted() {
-    setExpanded(true);
-    Animated.parallel([
-      Animated.spring(slideAnim, { toValue: 0, friction: 9, tension: 65, useNativeDriver: true }),
-      Animated.timing(fadeAnim, { toValue: 1, duration: 220, useNativeDriver: true }),
-    ]).start();
-  }
+  // Top of the onboarding funnel.
+  useEffect(() => { track('onboarding_intro_viewed'); }, []);
 
-  async function handleGoogle() {
-    setSocialLoading('google');
-    await signInWithGoogle();
-    setSocialLoading(null);
-  }
+  // Advance the hero photo/tag every HOLD_MS while the hero is showing — unless
+  // the user has Reduce Motion on, in which case the hero stays a single frame.
+  useEffect(() => {
+    if (page !== HERO_PAGE || reduced) return;
+    const t = setInterval(() => setHeroIndex((i) => (i + 1) % HERO_SEQUENCE.length), HOLD_MS);
+    return () => clearInterval(t);
+  }, [page, reduced]);
 
-  async function handleApple() {
-    setSocialLoading('apple');
-    await signInWithApple();
-    setSocialLoading(null);
-  }
+  const tagRise = useRise(heroIndex);
+  const isHero = page === HERO_PAGE;
+  const topInset = insets.top || 20;
 
   return (
-    <View style={[mobile.container, { paddingTop: insets.top }]}>
-      <View style={mobile.heroContainer}>
-        <View style={mobile.heroStripes} />
-      </View>
+    <View style={styles.root}>
+      {/* ── Background ── */}
+      {isHero ? (
+        <CrossfadeHero index={heroIndex} reduced={reduced} />
+      ) : (
+        <ImageBackground source={INTRO_PAGES[page].image} style={StyleSheet.absoluteFill} resizeMode="cover" />
+      )}
+      <LinearGradient
+        colors={(isHero ? HERO_GRADIENT : INTRO_GRADIENT).colors}
+        locations={(isHero ? HERO_GRADIENT : INTRO_GRADIENT).locations}
+        style={StyleSheet.absoluteFill}
+        pointerEvents="none"
+      />
 
-      <View style={mobile.brandSection}>
-        <Text style={mobile.logo}>fitXball</Text>
-        <Text style={mobile.headline}>Book courts.{'\n'}Find games. Play more.</Text>
-        <Text style={mobile.sub}>
-          Reserve a slot, join a pickup match, and keep your crew on the same page.
-        </Text>
-      </View>
-
-      <View style={[mobile.actions, { paddingBottom: insets.bottom + 24 }]}>
-        {!expanded ? (
-          <TouchableOpacity style={mobile.primaryBtn} onPress={handleGetStarted} activeOpacity={0.85}>
-            <Text style={mobile.primaryBtnText}>Get Started</Text>
+      {/* ── Top bar ── */}
+      {isHero ? (
+        <View style={[styles.heroTop, { top: topInset + 14 }]} pointerEvents="none">
+          <Wordmark size={26} />
+        </View>
+      ) : (
+        <View style={[styles.introTop, { top: topInset + 6 }]}>
+          <Wordmark size={23} />
+          <TouchableOpacity style={styles.skipPill} onPress={() => setPage(HERO_PAGE)} activeOpacity={0.85}>
+            <Text style={styles.skipText}>Skip</Text>
           </TouchableOpacity>
-        ) : (
-          <Animated.View style={[mobile.authOptions, { transform: [{ translateY: slideAnim }], opacity: fadeAnim }]}>
-            <TouchableOpacity style={mobile.primaryBtn} onPress={() => router.push('/(auth)/register')} activeOpacity={0.85}>
-              <Text style={mobile.primaryBtnText}>Create Account</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={mobile.secondaryBtn} onPress={() => router.push('/(auth)/login')} activeOpacity={0.85}>
-              <Text style={mobile.secondaryBtnText}>Sign In</Text>
-            </TouchableOpacity>
+        </View>
+      )}
 
-            <View style={mobile.dividerRow}>
-              <View style={mobile.dividerLine} />
-              <Text style={mobile.dividerText}>or</Text>
-              <View style={mobile.dividerLine} />
-            </View>
+      {/* ── Cycling sport tag (hero only) ── */}
+      {isHero && (
+        <Animated.View style={[styles.sportTag, { top: topInset + 62 }, tagRise]} pointerEvents="none">
+          <View style={styles.sportDot} />
+          <Text style={styles.sportTagText}>{SPORT_TAGS[heroIndex]}</Text>
+        </Animated.View>
+      )}
 
-            <View style={mobile.socialRow}>
-              <TouchableOpacity style={mobile.socialBtn} onPress={handleGoogle} disabled={!!socialLoading} activeOpacity={0.8}>
-                {socialLoading === 'google'
-                  ? <ActivityIndicator size="small" color={Colors.textPrimary} />
-                  : <><Ionicons name="logo-google" size={18} color={Colors.textPrimary} /><Text style={mobile.socialBtnText}>Google</Text></>
-                }
+      {/* ── Bottom content ── */}
+      <Animated.View style={[styles.bottom, { paddingBottom: (insets.bottom || 16) + 24 }, rise]}>
+        {isHero ? (
+          <>
+            <Text style={styles.heroHeadline}>
+              Pick your sport.{'\n'}Grab your spot.{'\n'}
+              <Text style={{ color: Colors.primary }}>Turn up and play.</Text>
+            </Text>
+            <Text style={styles.heroSub}>
+              We set up the matches for you. Grab a spot and just show up to play. Friendly sporting experience.
+            </Text>
+            <View style={{ gap: 11 }}>
+              <TouchableOpacity
+                style={styles.primaryBtn}
+                onPress={() => { track('onboarding_get_started'); router.push('/(auth)/register'); }}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.primaryBtnText}>Get Started</Text>
               </TouchableOpacity>
-              {Platform.OS === 'ios' && (
-                <TouchableOpacity style={mobile.socialBtn} onPress={handleApple} disabled={!!socialLoading} activeOpacity={0.8}>
-                  {socialLoading === 'apple'
-                    ? <ActivityIndicator size="small" color={Colors.textPrimary} />
-                    : <><Ionicons name="logo-apple" size={18} color={Colors.textPrimary} /><Text style={mobile.socialBtnText}>Apple</Text></>
-                  }
-                </TouchableOpacity>
-              )}
+              <TouchableOpacity
+                style={styles.ghostBtn}
+                onPress={() => { track('onboarding_signin_tapped'); router.push('/(auth)/login'); }}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.ghostBtnText}>I already have an account</Text>
+              </TouchableOpacity>
             </View>
-          </Animated.View>
+            <Text style={styles.legal}>
+              By continuing you agree to our{' '}
+              <Text style={styles.legalLink} onPress={() => router.push('/legal/terms')}>Terms</Text>
+              {' '}&{' '}
+              <Text style={styles.legalLink} onPress={() => router.push('/legal/privacy')}>Privacy</Text>.
+            </Text>
+          </>
+        ) : (
+          <>
+            <Text style={styles.kicker}>{INTRO_PAGES[page].kicker}</Text>
+            <Text style={styles.introHeadline}>{INTRO_PAGES[page].headline}</Text>
+            <Text style={styles.introSub}>{INTRO_PAGES[page].sub}</Text>
+            <View style={styles.dotsRow}>
+              <PageDots count={INTRO_PAGES.length} active={page} />
+              <TouchableOpacity style={styles.nextBtn} onPress={() => setPage((p) => p + 1)} activeOpacity={0.85}>
+                <Text style={styles.nextBtnText}>→</Text>
+              </TouchableOpacity>
+            </View>
+          </>
         )}
-        <Text style={mobile.legal}>By continuing you agree to our Terms & Privacy Policy.</Text>
-      </View>
+      </Animated.View>
     </View>
   );
 }
@@ -149,33 +261,56 @@ export default function WelcomeScreen() {
   return isDesktop ? <DesktopWelcome /> : <MobileWelcome />;
 }
 
-const mobile = StyleSheet.create({
-  container: { flex: 1, backgroundColor: Colors.background },
-  heroContainer: {
-    flex: 1, margin: 16, marginBottom: 0,
-    borderRadius: 24, overflow: 'hidden',
-    position: 'relative', justifyContent: 'flex-end', padding: 16,
+const styles = StyleSheet.create({
+  root: { flex: 1, backgroundColor: Colors.background },
+
+  // Top bars
+  introTop: {
+    position: 'absolute', left: 24, right: 22, zIndex: 20,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
   },
-  heroStripes: { ...StyleSheet.absoluteFill, backgroundColor: Colors.surface },
-  brandSection: { paddingHorizontal: 24, paddingTop: 28, gap: 12 },
-  logo: { color: Colors.primary, fontSize: 44, fontWeight: '900', letterSpacing: -1.5, lineHeight: 44 },
-  headline: { color: Colors.textPrimary, fontSize: 26, fontWeight: '800', letterSpacing: -0.4, lineHeight: 31 },
-  sub: { color: Colors.textSecondary, fontSize: 15, lineHeight: 22 },
-  actions: { paddingHorizontal: 24, paddingTop: 24, gap: 12, minHeight: 140, justifyContent: 'flex-end' },
-  authOptions: { gap: 12 },
-  primaryBtn: { backgroundColor: Colors.primary, borderRadius: 28, paddingVertical: 16, alignItems: 'center' },
-  primaryBtnText: { color: Colors.background, fontSize: 16, fontWeight: '800' },
-  secondaryBtn: { borderRadius: 28, borderWidth: 1, borderColor: Colors.border, paddingVertical: 16, alignItems: 'center' },
-  secondaryBtnText: { color: Colors.textPrimary, fontSize: 16, fontWeight: '700' },
-  legal: { color: Colors.textMuted, fontSize: 12, textAlign: 'center', lineHeight: 18 },
-  dividerRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  dividerLine: { flex: 1, height: 1, backgroundColor: Colors.border },
-  dividerText: { color: Colors.textMuted, fontSize: 13 },
-  socialRow: { flexDirection: 'row', gap: 12 },
-  socialBtn: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    gap: 8, borderWidth: 1, borderColor: Colors.border, borderRadius: 28,
-    paddingVertical: 13, backgroundColor: Colors.surface,
+  heroTop: { position: 'absolute', left: 0, right: 0, alignItems: 'center', zIndex: 20 },
+  skipPill: {
+    backgroundColor: 'rgba(0,0,0,0.4)', paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20,
   },
-  socialBtnText: { color: Colors.textPrimary, fontSize: 14, fontWeight: '700' },
+  skipText: { color: Colors.textPrimary, fontSize: 13.5, fontWeight: '600' },
+
+  // Sport tag
+  sportTag: {
+    position: 'absolute', left: 26, zIndex: 20,
+    flexDirection: 'row', alignItems: 'center', gap: 7,
+  },
+  sportDot: { width: 7, height: 7, borderRadius: 3.5, backgroundColor: Colors.primary },
+  sportTagText: { color: Colors.primary, fontSize: 12, fontWeight: '800', letterSpacing: 2 },
+
+  // Bottom block
+  bottom: { position: 'absolute', left: 0, right: 0, bottom: 0, paddingHorizontal: 26, zIndex: 20 },
+
+  // Intro copy
+  kicker: { color: Colors.primary, fontSize: 12, fontWeight: '800', letterSpacing: 2.5, marginBottom: 12 },
+  introHeadline: {
+    color: Colors.textPrimary, fontSize: 40, fontWeight: '900', letterSpacing: -1.6, lineHeight: 39, marginBottom: 14,
+  },
+  introSub: { color: '#cfcfcf', fontSize: 15, lineHeight: 22.5, marginBottom: 30, maxWidth: 300 },
+  dotsRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  nextBtn: {
+    width: 58, height: 58, borderRadius: 29, backgroundColor: Colors.primary,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  nextBtnText: { color: Colors.background, fontSize: 24, fontWeight: '900', lineHeight: 28 },
+
+  // Hero copy
+  heroHeadline: {
+    color: Colors.textPrimary, fontSize: 39, fontWeight: '900', letterSpacing: -1.6, lineHeight: 38, marginBottom: 14,
+  },
+  heroSub: { color: '#cfcfcf', fontSize: 15, lineHeight: 21.75, marginBottom: 22, maxWidth: 300 },
+  primaryBtn: { backgroundColor: Colors.primary, borderRadius: 30, paddingVertical: 17, alignItems: 'center' },
+  primaryBtnText: { color: Colors.background, fontSize: 16.5, fontWeight: '800', letterSpacing: -0.2 },
+  ghostBtn: {
+    borderRadius: 30, paddingVertical: 16, alignItems: 'center',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.22)',
+  },
+  ghostBtnText: { color: Colors.textPrimary, fontSize: 15.5, fontWeight: '700' },
+  legal: { color: '#6a6a6a', fontSize: 11.5, lineHeight: 17, textAlign: 'center', marginTop: 16 },
+  legalLink: { color: '#99aaaa', textDecorationLine: 'underline' },
 });

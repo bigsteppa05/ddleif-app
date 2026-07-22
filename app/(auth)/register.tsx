@@ -10,25 +10,32 @@ import {
   Platform,
   ScrollView,
   Image,
-  Alert,
   Animated,
   TouchableWithoutFeedback,
   Keyboard,
-  useWindowDimensions,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import * as SecureStore from 'expo-secure-store';
-import { createClient } from '@supabase/supabase-js';
-import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY, uploadAvatar } from '@/lib/supabase';
+import { supabase, uploadAvatar } from '@/lib/supabase';
 import { OtpInput } from '@/components/OtpInput';
 import { Colors } from '@/constants/colors';
-import { notify } from '@/lib/ui';
+import { pickImageFromLibrary } from '@/lib/media';
+import { Wordmark, SPORT_IMAGES, useRise, BANNER_GRADIENT } from '@/components/onboarding';
+import { useReducedMotion } from '@/lib/useReducedMotion';
+import { track } from '@/lib/analytics';
 import { AuthShell, AuthHeading, LimeLink, WBtn, FW, useIsDesktopWeb } from '@/components/web/kit';
 
 const TOTAL_STEPS = 4;
+
+// Step indices shared by both layouts. On mobile these read as
+// Create → Verify → Profile → Done (success); on desktop the same indices map to
+// credentials / OTP / profile / photo. The distinction only affects navigation
+// (see handleNext / handleFinish), not the shared form state.
+const STEP = { CREATE: 0, VERIFY: 1, PROFILE: 2, DONE: 3 } as const;
 
 // react-native-web focus guard: on web, a tap on a child input bubbles up to the
 // TouchableWithoutFeedback, whose Keyboard.dismiss() then blurs the just-focused
@@ -48,6 +55,7 @@ export default function RegisterScreen() {
   const insets = useSafeAreaInsets();
   const isDesktop = useIsDesktopWeb();
   const [step, setStep] = useState(0);
+  const rise = useRise(step); // re-triggers the enter animation on each mobile step
 
   // Sign out any existing session when entering registration
   useEffect(() => {
@@ -90,8 +98,19 @@ export default function RegisterScreen() {
   const [toastMsg, setToastMsg] = useState('');
 
   // Animations
+  const reduced = useReducedMotion();
   const shakeAnim = useRef(new Animated.Value(0)).current;
   const toastSlide = useRef(new Animated.Value(80)).current;
+  const successScale = useRef(new Animated.Value(0.9)).current;
+
+  // "You're in." success circle: a subtle spring pop when the Done step arrives
+  // (respects Reduce Motion — snaps to full size with no overshoot).
+  useEffect(() => {
+    if (step !== STEP.DONE) return;
+    if (reduced) { successScale.setValue(1); return; }
+    successScale.setValue(0.9);
+    Animated.spring(successScale, { toValue: 1, friction: 5, tension: 140, useNativeDriver: true }).start();
+  }, [step, reduced, successScale]);
 
   // Input refs for chaining
   const emailRef = useRef<TextInput>(null);
@@ -206,6 +225,7 @@ export default function RegisterScreen() {
   // ── Shake + haptics ───────────────────────────────────────────────────────
   function shake() {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    if (reduced) return; // keep the haptic, drop the position shake
     shakeAnim.setValue(0);
     Animated.sequence([
       Animated.timing(shakeAnim, { toValue: 9, duration: 55, useNativeDriver: true }),
@@ -225,46 +245,90 @@ export default function RegisterScreen() {
     router.replace('/(auth)/welcome');
   }
 
+  function goToApp() {
+    router.replace('/(tabs)');
+  }
+
+  // Start (or restart) the resend countdown. Shared by the initial OTP send and
+  // the Resend action.
+  function startOtpCountdown() {
+    setOtpCountdown(60);
+    setOtpCanResend(false);
+    const timer = setInterval(() => {
+      setOtpCountdown((c) => {
+        if (c <= 1) { clearInterval(timer); setOtpCanResend(true); return 0; }
+        return c - 1;
+      });
+    }, 1000);
+  }
+
+  async function handleOtpChange(val: string, isComplete: boolean) {
+    setOtpCode(val);
+    setOtpError('');
+    if (!isComplete) return;
+    const { error: verifyError } = await supabase.auth.verifyOtp({
+      email: email.trim().toLowerCase(),
+      token: val,
+      type: 'email',
+    });
+    if (verifyError) {
+      setOtpError("That code isn't right. Check and try again.");
+      shake();
+    } else {
+      setOtpError('');
+      setOtpVerified(true);
+      track('signup_verified');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      // Auto-advance to the profile step once verified. The password is attached
+      // once, awaited, in handleFinish — setting it here caused a same_password race.
+      setTimeout(() => setStep((s) => (s === STEP.VERIFY ? STEP.PROFILE : s)), 700);
+    }
+  }
+
+  async function handleResend() {
+    if (!otpCanResend) return;
+    startOtpCountdown();
+    const { error: resendError } = await supabase.auth.signInWithOtp({ email: email.trim().toLowerCase() });
+    if (resendError) setOtpError(resendError.message);
+  }
+
   async function handleNext() {
     if (!currentStepValid) {
       shake();
-      if (step === 0) {
+      if (step === STEP.CREATE) {
         if (!emailValid || emailTaken)
           setFieldError('email', emailTaken ? 'This email is already registered.' : 'Enter a valid email address.');
-        if (!phoneValid)
-          setFieldError('phone', 'Enter a valid Kenyan phone number.');
         if (!pwValid)
           setFieldError('password', "Password doesn't meet all requirements.");
-      } else if (step === 2) {
+      } else if (step === STEP.PROFILE) {
         if (!name.trim()) setFieldError('name', 'Full name is required.');
         if (!username || username.length < 3) setFieldError('username', 'At least 3 characters.');
         else if (usernameAvailable === false) setFieldError('username', 'Username is already taken.');
+        if (!phoneValid) setFieldError('phone', 'Enter a valid Kenyan phone number.');
       }
       return;
     }
-    if (step === 0) {
+    if (step === STEP.CREATE) {
+      setLoading(true);
       const { error: otpSendError } = await supabase.auth.signInWithOtp({
         email: email.trim().toLowerCase(),
       });
+      setLoading(false);
       if (otpSendError) {
-        setLoading(false);
         setToastMsg(otpSendError.message);
         return;
       }
-      setOtpCountdown(60);
-      setOtpCanResend(false);
-      const timer = setInterval(() => {
-        setOtpCountdown((c) => {
-          if (c <= 1) { clearInterval(timer); setOtpCanResend(true); return 0; }
-          return c - 1;
-        });
-      }, 1000);
+      track('signup_started');
+      startOtpCountdown();
     }
-    if (step < TOTAL_STEPS - 1) {
-      scrollTo(step + 1);
-    } else {
-      handleFinish();
+    if (isDesktop) {
+      if (step < TOTAL_STEPS - 1) scrollTo(step + 1);
+      else handleFinish();
+      return;
     }
+    // Mobile: Create → Verify → Profile, then Profile submits into the Done screen.
+    if (step === STEP.PROFILE) handleFinish();
+    else scrollTo(step + 1);
   }
 
   // Attach the password chosen in step 1 to the account. The user already has a
@@ -344,35 +408,22 @@ export default function RegisterScreen() {
     }
 
     setLoading(false);
-    router.replace('/(tabs)');
+    track('signup_completed');
+    // Desktop drops straight into the app; mobile shows the "You're in" success
+    // screen (STEP.DONE) whose CTA then enters the app via goToApp().
+    if (isDesktop) {
+      router.replace('/(tabs)');
+    } else {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setStep(STEP.DONE);
+    }
   }
 
   // ── Photo picker ──────────────────────────────────────────────────────────
+  // Permission handling (web/iOS/Android + Settings fallback) lives in lib/media.
   async function pickPhoto() {
-    if (Platform.OS === 'web') {
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = 'image/jpeg,image/png,image/webp';
-      input.onchange = () => {
-        const file = input.files?.[0];
-        if (file) setAvatarUri(URL.createObjectURL(file));
-      };
-      input.click();
-      return;
-    }
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const ImagePicker = require('expo-image-picker');
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [1, 1],
-        quality: 0.8,
-      });
-      if (!result.canceled && result.assets[0]) setAvatarUri(result.assets[0].uri);
-    } catch {
-      notify('Not available', 'Image picker requires a native build.');
-    }
+    const uri = await pickImageFromLibrary({ aspect: [1, 1], quality: 0.8 });
+    if (uri) setAvatarUri(uri);
   }
 
   // ── Step label ────────────────────────────────────────────────────────────
@@ -409,39 +460,8 @@ export default function RegisterScreen() {
       verified={otpVerified}
       countdown={otpCountdown}
       canResend={otpCanResend}
-      onCode={async (val, isComplete) => {
-        setOtpCode(val);
-        setOtpError('');
-        if (!isComplete) return;
-        const { error: verifyError } = await supabase.auth.verifyOtp({
-          email: email.trim().toLowerCase(),
-          token: val,
-          type: 'email',
-        });
-        if (verifyError) {
-          setOtpError("That code isn't right. Check and try again.");
-        } else {
-          setOtpError('');
-          setOtpVerified(true);
-          // The password is set once, awaited, in handleFinish. Setting it here
-          // too caused a same_password 422 race that blocked account creation.
-          // Auto-advance to the profile step once verified
-          setTimeout(() => setStep((s) => (s === 1 ? 2 : s)), 700);
-        }
-      }}
-      onResend={async () => {
-        if (!otpCanResend) return;
-        setOtpCanResend(false);
-        setOtpCountdown(60);
-        const timer = setInterval(() => {
-          setOtpCountdown((c) => {
-            if (c <= 1) { clearInterval(timer); setOtpCanResend(true); return 0; }
-            return c - 1;
-          });
-        }, 1000);
-        const { error: resendError } = await supabase.auth.signInWithOtp({ email: email.trim().toLowerCase() });
-        if (resendError) setOtpError(resendError.message);
-      }}
+      onCode={handleOtpChange}
+      onResend={handleResend}
       onSkip={undefined}
     />,
     <StepProfile
@@ -514,94 +534,251 @@ export default function RegisterScreen() {
     );
   }
 
+  const enterStyle = {
+    opacity: rise.opacity,
+    transform: [rise.transform[0], { translateX: shakeAnim }],
+  };
+
   return (
     <TapToDismiss>
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
-        {/* ── Header ── */}
-        <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
-          <View style={styles.backBtn} />
-          <View style={styles.dotsRow}>
-            {Array.from({ length: TOTAL_STEPS }).map((_, i) => (
-              <View
-                key={i}
-                style={[
-                  styles.dot,
-                  i === step && styles.dotActive,
-                  i < step && styles.dotDone,
-                ]}
+      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <Animated.View style={[styles.flex, enterStyle]}>
+
+          {/* ── CREATE ── */}
+          {step === STEP.CREATE && (
+            <View style={styles.flex}>
+              <View style={[styles.banner, { height: insets.top + 150 }]}>
+                <Image source={SPORT_IMAGES.football} style={StyleSheet.absoluteFill} resizeMode="cover" />
+                <LinearGradient
+                  colors={BANNER_GRADIENT.colors}
+                  locations={BANNER_GRADIENT.locations}
+                  style={StyleSheet.absoluteFill}
+                />
+                <View style={[styles.bannerNav, { top: insets.top + 8 }]}>
+                  <TouchableOpacity style={styles.chev} onPress={goBack} activeOpacity={0.8}>
+                    <Ionicons name="chevron-back" size={20} color={Colors.textPrimary} />
+                  </TouchableOpacity>
+                  <View style={styles.pbar}><View style={[styles.pbarFill, { width: '33%' }]} /></View>
+                </View>
+                <Text style={styles.bannerTitle}>Create your account</Text>
+              </View>
+
+              <ScrollView style={styles.flex} contentContainerStyle={styles.createBody} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+                <Text style={styles.lbl}>Email</Text>
+                <TextInput
+                  style={[styles.fld, { marginBottom: 18 }, !!errors.email && styles.fldError]}
+                  value={email}
+                  onChangeText={(v) => { clearError('email'); setEmailTaken(false); setEmail(v); }}
+                  onBlur={onBlurEmail}
+                  placeholder="you@example.com" placeholderTextColor="#565656"
+                  keyboardType="email-address" autoCapitalize="none" autoCorrect={false} returnKeyType="next"
+                />
+                {!!errors.email && (
+                  <View style={styles.errRow}>
+                    <Text style={styles.errText}>{errors.email}</Text>
+                    {emailTaken && (
+                      <TouchableOpacity onPress={() => router.replace('/(auth)/login')} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
+                        <Text style={styles.errLink}>Sign in instead</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                )}
+                <Text style={styles.lbl}>Password</Text>
+                <TextInput
+                  style={[styles.fld, !!errors.password && styles.fldError]}
+                  value={password}
+                  onChangeText={(v) => { clearError('password'); setPassword(v); }}
+                  onBlur={onBlurPassword}
+                  placeholder="Create a password" placeholderTextColor="#565656"
+                  secureTextEntry autoCapitalize="none" autoCorrect={false} returnKeyType="done"
+                />
+                <View style={styles.chipsRow}>
+                  <ReqChip ok={pwReqs.length} label="8+ characters" />
+                  <ReqChip ok={pwReqs.upper} label="Uppercase" />
+                  <ReqChip ok={pwReqs.number} label="Number" />
+                </View>
+                {!!errors.password && <Text style={[styles.errText, { marginTop: 10 }]}>{errors.password}</Text>}
+              </ScrollView>
+
+              <View style={[styles.stepFooter, { paddingBottom: (insets.bottom || 0) + 12 }]}>
+                <TouchableOpacity style={[styles.pbtn, (!step0Valid || loading) && styles.pbtnDim]} onPress={handleNext} disabled={loading} activeOpacity={0.85}>
+                  {loading ? <ActivityIndicator color={Colors.background} /> : <Text style={styles.pbtnText}>Continue</Text>}
+                </TouchableOpacity>
+                <View style={styles.signinRow}>
+                  <Text style={styles.signinText}>Already have an account? </Text>
+                  <TouchableOpacity onPress={() => router.replace('/(auth)/login')}>
+                    <Text style={styles.signinLink}>Sign In</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          )}
+
+          {/* ── VERIFY ── */}
+          {step === STEP.VERIFY && (
+            <View style={[styles.step, { paddingTop: insets.top + 16, paddingBottom: (insets.bottom || 0) + 18 }]}>
+              <MobileTopNav onBack={goBack} width="66%" />
+              <Text style={styles.stitle}>Check your email</Text>
+              <Text style={styles.ssub}>
+                We sent a {OTP_LENGTH}-digit code to <Text style={{ color: Colors.textPrimary }}>{email || 'your email'}</Text>. Pop it in to confirm it&apos;s you.
+              </Text>
+              <OtpInput
+                value={otpCode}
+                length={OTP_LENGTH}
+                onChange={(v) => handleOtpChange(v, false)}
+                onComplete={(v) => handleOtpChange(v, true)}
+                hasError={!!otpError}
+                verified={otpVerified}
+                autoFocus
               />
-            ))}
-          </View>
-          <Text style={styles.stepCount}>Step {step + 1} of {TOTAL_STEPS}</Text>
-        </View>
-
-        <Animated.View style={{ transform: [{ translateX: shakeAnim }] }}>
-          <Text style={styles.stepTitle}>{stepTitle}</Text>
-        </Animated.View>
-
-        {/* ── Step content ── */}
-        <ScrollView
-          style={{ flex: 1 }}
-          contentContainerStyle={styles.stepContent}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
-          {stepComponents[step]}
-        </ScrollView>
-
-        {/* ── Footer ── */}
-        <View style={[styles.footer, { paddingBottom: insets.bottom + 16 }]}>
-          {step === TOTAL_STEPS - 1 && (
-            <TouchableOpacity onPress={() => !loading && handleFinish()} disabled={loading}>
-              <Text style={styles.skipText}>Skip</Text>
-            </TouchableOpacity>
-          )}
-          {/* OTP step: hide default Continue; StepOTP handles its own verify button */}
-          {step !== 1 && (
-            <TouchableOpacity
-              style={[
-                styles.cta,
-                step === TOTAL_STEPS - 1 && styles.ctaFull,
-                !currentStepValid && styles.ctaDim,
-              ]}
-              onPress={handleNext}
-              activeOpacity={0.85}
-              disabled={loading}
-            >
-              {loading ? (
-                <ActivityIndicator color={Colors.background} />
-              ) : (
-                <Text style={styles.ctaText}>{ctaLabel}</Text>
+              {!!otpError && (
+                <View style={styles.otpErrorRow}>
+                  <Ionicons name="alert-circle-outline" size={15} color={Colors.error} />
+                  <Text style={styles.otpErrorText}>{otpError}</Text>
+                </View>
               )}
-            </TouchableOpacity>
+              {otpVerified ? (
+                <View style={styles.verifiedPill}>
+                  <Ionicons name="checkmark-circle" size={18} color={Colors.primary} />
+                  <Text style={styles.verifiedText}>Email verified</Text>
+                </View>
+              ) : (
+                <Text style={styles.resendText}>
+                  Didn&apos;t get it?{' '}
+                  {otpCanResend
+                    ? <Text style={styles.resendLink} onPress={handleResend}>Resend code</Text>
+                    : <Text style={styles.resendMuted}>Resend in 0:{otpCountdown.toString().padStart(2, '0')}</Text>}
+                </Text>
+              )}
+              <View style={styles.grow} />
+              <TouchableOpacity style={[styles.pbtn, !otpVerified && styles.pbtnDim]} onPress={handleNext} disabled={!otpVerified} activeOpacity={0.85}>
+                <Text style={styles.pbtnText}>Verify &amp; continue</Text>
+              </TouchableOpacity>
+            </View>
           )}
-        </View>
 
-        {/* ── Sign in link ── */}
-        <View style={[styles.signinRow, { paddingBottom: insets.bottom + 8 }]}>
-          <Text style={styles.signinText}>Already have an account? </Text>
-          <TouchableOpacity onPress={() => router.replace('/(auth)/login')} disabled={loading}>
-            <Text style={styles.signinLink}>Sign In</Text>
-          </TouchableOpacity>
-        </View>
+          {/* ── PROFILE ── */}
+          {step === STEP.PROFILE && (
+            <View style={[styles.step, { paddingTop: insets.top + 16 }]}>
+              <MobileTopNav onBack={goBack} width="100%" />
+              <ScrollView style={styles.flex} contentContainerStyle={{ paddingBottom: 16 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+                <Text style={styles.stitle}>Set up your profile</Text>
+                <Text style={[styles.ssub, { marginBottom: 18 }]}>So teammates know who&apos;s turning up.</Text>
+
+                <View style={styles.avatarWrap}>
+                  <TouchableOpacity style={styles.avatar} onPress={pickPhoto} activeOpacity={0.85} disabled={loading}>
+                    {avatarUri ? (
+                      <Image source={{ uri: avatarUri }} style={styles.avatarImg} />
+                    ) : (
+                      <>
+                        <Ionicons name="camera-outline" size={22} color={Colors.textSecondary} />
+                        <Text style={styles.avatarLabel}>Add photo</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                </View>
+
+                <Text style={styles.lbl}>Full name</Text>
+                <TextInput
+                  style={[styles.fld, { marginBottom: 16 }, !!errors.name && styles.fldError]}
+                  value={name}
+                  onChangeText={(v) => { clearError('name'); setName(v); }}
+                  onBlur={onBlurName}
+                  placeholder="Alex Kamau" placeholderTextColor="#565656"
+                  autoCapitalize="words" autoCorrect={false} returnKeyType="next"
+                />
+
+                <Text style={styles.lbl}>Username</Text>
+                <View style={[styles.unWrap, { marginBottom: 16 }, !!errors.username && styles.fldError]}>
+                  <Text style={styles.prefixAt}>@</Text>
+                  <TextInput
+                    style={styles.unInput}
+                    value={username}
+                    onChangeText={(v) => { clearError('username'); setUsername(v.replace(/\s/g, '').toLowerCase()); }}
+                    onBlur={onBlurUsername}
+                    placeholder="alexkamau" placeholderTextColor="#565656"
+                    autoCapitalize="none" autoCorrect={false} returnKeyType="next"
+                  />
+                  {usernameChecking && <ActivityIndicator size="small" color={Colors.textMuted} />}
+                  {!usernameChecking && username.length >= 3 && usernameAvailable === true && (
+                    <Ionicons name="checkmark-circle" size={18} color={Colors.primary} />
+                  )}
+                  {!usernameChecking && usernameAvailable === false && (
+                    <Ionicons name="close-circle" size={18} color={Colors.error} />
+                  )}
+                </View>
+                {!!errors.username && <Text style={[styles.errText, { marginTop: -8, marginBottom: 16 }]}>{errors.username}</Text>}
+
+                <Text style={styles.lbl}>Phone number</Text>
+                <View style={styles.phoneRow}>
+                  <View style={styles.phonePrefixBox}>
+                    <Text style={styles.phoneFlag}>🇰🇪</Text>
+                    <Text style={styles.phonePrefix}>+254</Text>
+                  </View>
+                  <TextInput
+                    style={styles.phoneInput}
+                    value={phone}
+                    onChangeText={(v) => setPhone(v.replace(/\D/g, ''))}
+                    placeholder="712 345 678" placeholderTextColor="#565656"
+                    keyboardType="phone-pad" returnKeyType="done"
+                  />
+                </View>
+              </ScrollView>
+
+              <View style={[styles.stepFooter, { paddingBottom: (insets.bottom || 0) + 18 }]}>
+                <TouchableOpacity style={[styles.pbtn, (!step2Valid || loading) && styles.pbtnDim]} onPress={handleNext} disabled={loading} activeOpacity={0.85}>
+                  {loading ? <ActivityIndicator color={Colors.background} /> : <Text style={styles.pbtnText}>Create account</Text>}
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+
+          {/* ── DONE ── */}
+          {step === STEP.DONE && (
+            <View style={[styles.doneRoot, { paddingBottom: (insets.bottom || 0) + 24 }]}>
+              <View style={styles.glow} pointerEvents="none" />
+              <Animated.View style={[styles.successCircle, { transform: [{ scale: successScale }] }]}>
+                <Ionicons name="checkmark" size={46} color={Colors.background} />
+              </Animated.View>
+              <Text style={styles.doneTitle}>You&apos;re in.</Text>
+              <Text style={styles.doneSub}>Your profile&apos;s set. Find a game that fits, grab your spot and just turn up to play.</Text>
+              <TouchableOpacity style={[styles.pbtn, styles.doneBtn]} onPress={goToApp} activeOpacity={0.85}>
+                <Text style={styles.pbtnText}>Explore games</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </Animated.View>
 
         {/* ── Network toast ── */}
         {!!toastMsg && (
-          <Animated.View
-            style={[
-              styles.toast,
-              { bottom: insets.bottom + 104, transform: [{ translateY: toastSlide }] },
-            ]}
-          >
+          <Animated.View style={[styles.toast, { bottom: (insets.bottom || 0) + 96, transform: [{ translateY: toastSlide }] }]}>
             <Ionicons name="alert-circle-outline" size={16} color={Colors.warning} />
             <Text style={styles.toastText}>{toastMsg}</Text>
           </Animated.View>
         )}
       </KeyboardAvoidingView>
     </TapToDismiss>
+  );
+}
+
+// ── Mobile helpers ────────────────────────────────────────────────────────────
+function MobileTopNav({ onBack, width }: { onBack: () => void; width: '33%' | '66%' | '100%' }) {
+  return (
+    <View style={styles.topnav}>
+      <TouchableOpacity style={styles.chev} onPress={onBack} activeOpacity={0.8}>
+        <Ionicons name="chevron-back" size={20} color={Colors.textPrimary} />
+      </TouchableOpacity>
+      <View style={styles.pbar}><View style={[styles.pbarFill, { width }]} /></View>
+    </View>
+  );
+}
+
+function ReqChip({ ok, label }: { ok: boolean; label: string }) {
+  return (
+    <View style={styles.chip}>
+      <Ionicons name={ok ? 'checkmark' : 'ellipse-outline'} size={12} color={ok ? Colors.primary : Colors.textMuted} />
+      <Text style={[styles.chipText, { color: ok ? Colors.primary : Colors.textMuted }]}>{label}</Text>
+    </View>
   );
 }
 
@@ -927,115 +1104,143 @@ function StepPhoto({
 // Styles
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── Mobile (iOS/Android) styles — recreate the onboarding revamp handoff ──────
+const FIELD_BG = '#141414';
+const FIELD_BORDER = '#262626';
+
 const styles = StyleSheet.create({
   flex: { flex: 1, backgroundColor: Colors.background },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
+
+  // Shared step frame (Verify / Profile). Padding mirrors the prototype's
+  // `.step { padding: 60 24 34 }`, with the top value coming from the safe area.
+  step: { flex: 1, paddingHorizontal: 24 },
+
+  // Top nav: back chevron + progress bar
+  topnav: { flexDirection: 'row', alignItems: 'center', gap: 14, marginBottom: 24 },
+  chev: {
+    width: 38, height: 38, borderRadius: 19, backgroundColor: '#161616',
+    borderWidth: 1, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center',
+  },
+  pbar: { flex: 1, height: 4, backgroundColor: '#1e1e1e', borderRadius: 3, overflow: 'hidden' },
+  pbarFill: { height: '100%', backgroundColor: Colors.primary, borderRadius: 3 },
+
+  // Create-step banner
+  banner: { position: 'relative', overflow: 'hidden' },
+  bannerNav: { position: 'absolute', left: 20, right: 20, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  bannerTitle: {
+    position: 'absolute', left: 24, bottom: 14,
+    color: Colors.textPrimary, fontSize: 26, fontWeight: '900', letterSpacing: -1.1,
+  },
+  createBody: { paddingHorizontal: 24, paddingTop: 22, paddingBottom: 12 },
+
+  // Titles / subs
+  stitle: { color: Colors.textPrimary, fontSize: 30, fontWeight: '900', letterSpacing: -1.1, lineHeight: 31, marginBottom: 8 },
+  ssub: { color: '#9a9a9a', fontSize: 14, lineHeight: 21, marginBottom: 24 },
+
+  // Labels + fields
+  lbl: {
+    color: '#8a8a8a', fontSize: 10.5, fontWeight: '700', letterSpacing: 1.2,
+    textTransform: 'uppercase', marginBottom: 8,
+  },
+  fld: {
+    backgroundColor: FIELD_BG, borderWidth: 1, borderColor: FIELD_BORDER, borderRadius: 14,
+    paddingHorizontal: 16, paddingVertical: 15, color: Colors.textPrimary, fontSize: 16,
+    ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as object) : null),
+  },
+  fldError: { borderColor: Colors.error },
+
+  // Password requirement chips
+  chipsRow: { flexDirection: 'row', gap: 14, marginTop: 12 },
+  chip: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  chipText: { fontSize: 11.5, fontWeight: '600' },
+
+  // Errors
+  errRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 8, marginBottom: 4 },
+  errText: { color: Colors.error, fontSize: 12 },
+  errLink: { color: Colors.primary, fontSize: 12, fontWeight: '700' },
+
+  // OTP extras
+  otpErrorRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 16 },
+  otpErrorText: { color: Colors.error, fontSize: 13 },
+  resendText: { color: '#8a8a8a', fontSize: 13.5, marginTop: 20 },
+  resendLink: { color: Colors.primary, fontSize: 13.5, fontWeight: '700' },
+  resendMuted: { color: '#565656', fontSize: 13.5 },
+  verifiedPill: {
+    flexDirection: 'row', alignItems: 'center', gap: 10, alignSelf: 'flex-start',
+    backgroundColor: `${Colors.primary}14`, borderWidth: 1, borderColor: `${Colors.primary}55`,
+    borderRadius: 999, paddingHorizontal: 16, paddingVertical: 9, marginTop: 20,
+  },
+  verifiedText: { color: Colors.primary, fontSize: 14, fontWeight: '700' },
+
+  // Profile: avatar + username + phone
+  avatarWrap: { alignItems: 'center', marginBottom: 22 },
+  avatar: {
+    width: 92, height: 92, borderRadius: 46, backgroundColor: FIELD_BG,
+    borderWidth: 1, borderColor: '#333', borderStyle: 'dashed',
+    alignItems: 'center', justifyContent: 'center', gap: 3, overflow: 'hidden',
+  },
+  avatarImg: { width: 92, height: 92, borderRadius: 46 },
+  avatarLabel: { color: '#666', fontSize: 10 },
+  unWrap: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: FIELD_BG, borderWidth: 1, borderColor: FIELD_BORDER, borderRadius: 14,
     paddingHorizontal: 16,
-    paddingBottom: 4,
-    gap: 12,
   },
-  backBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: Colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
+  prefixAt: { color: '#666', fontSize: 16 },
+  unInput: {
+    flex: 1, color: Colors.textPrimary, fontSize: 16, paddingVertical: 15,
+    ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as object) : null),
   },
-  dotsRow: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
+  phoneRow: { flexDirection: 'row', gap: 10 },
+  phonePrefixBox: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: FIELD_BG, borderWidth: 1, borderColor: FIELD_BORDER, borderRadius: 14,
+    paddingHorizontal: 14,
   },
-  dot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: Colors.border,
+  phoneFlag: { fontSize: 16 },
+  phonePrefix: { color: Colors.textPrimary, fontSize: 15, fontWeight: '600' },
+  phoneInput: {
+    flex: 1, backgroundColor: FIELD_BG, borderWidth: 1, borderColor: FIELD_BORDER, borderRadius: 14,
+    paddingHorizontal: 16, paddingVertical: 15, color: Colors.textPrimary, fontSize: 16,
+    ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as object) : null),
   },
-  dotActive: {
-    width: 20,
-    borderRadius: 4,
+
+  // Primary pill button
+  pbtn: {
+    borderRadius: 30, paddingVertical: 17, alignItems: 'center', justifyContent: 'center',
     backgroundColor: Colors.primary,
   },
-  dotDone: {
-    backgroundColor: Colors.primaryDim,
-    opacity: 0.6,
+  pbtnDim: { opacity: 0.4 },
+  pbtnText: { color: Colors.background, fontSize: 16.5, fontWeight: '800', letterSpacing: -0.2 },
+
+  // Footers
+  stepFooter: { paddingHorizontal: 24, paddingTop: 12 },
+  grow: { flex: 1, minHeight: 14 },
+  signinRow: { flexDirection: 'row', justifyContent: 'center', marginTop: 14 },
+  signinText: { color: '#8a8a8a', fontSize: 13 },
+  signinLink: { color: Colors.primary, fontSize: 13, fontWeight: '700' },
+
+  // Done / success
+  doneRoot: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 30 },
+  glow: {
+    position: 'absolute', top: '22%', width: 280, height: 280, borderRadius: 140,
+    backgroundColor: 'rgba(200,255,0,0.12)',
   },
-  stepCount: {
-    color: Colors.textMuted,
-    fontSize: 13,
-    fontWeight: '600',
+  successCircle: {
+    width: 88, height: 88, borderRadius: 44, backgroundColor: Colors.primary,
+    alignItems: 'center', justifyContent: 'center', marginBottom: 26,
+    shadowColor: Colors.primary, shadowOffset: { width: 0, height: 0 }, shadowRadius: 20, shadowOpacity: 0.5,
+    elevation: 12,
   },
-  stepTitle: {
-    color: Colors.textPrimary,
-    fontSize: 26,
-    fontWeight: '800',
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 8,
-  },
-  stepContent: {
-    paddingHorizontal: 20,
-    paddingTop: 8,
-    paddingBottom: 32,
-  },
-  footer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    paddingHorizontal: 20,
-    paddingTop: 12,
-    gap: 16,
-    borderTopWidth: 1,
-    borderTopColor: Colors.border,
-  },
-  skipText: {
-    color: Colors.textSecondary,
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  cta: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: Colors.primary,
-    borderRadius: 28,
-    paddingHorizontal: 28,
-    paddingVertical: 14,
-    minWidth: 130,
-    gap: 6,
-  },
-  ctaFull: { flex: 1 },
-  ctaDim: { opacity: 0.4 },
-  ctaText: {
-    color: Colors.background,
-    fontSize: 16,
-    fontWeight: '800',
-  },
-  signinRow: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    paddingTop: 8,
-  },
-  signinText: { color: Colors.textSecondary, fontSize: 14 },
-  signinLink: { color: Colors.primary, fontSize: 14, fontWeight: '700' },
+  doneTitle: { color: Colors.textPrimary, fontSize: 38, fontWeight: '900', letterSpacing: -1.4, marginBottom: 12 },
+  doneSub: { color: '#a5a5a5', fontSize: 15, lineHeight: 22.5, textAlign: 'center', maxWidth: 270, marginBottom: 32 },
+  doneBtn: { alignSelf: 'stretch', maxWidth: 280 },
+
+  // Network toast
   toast: {
-    position: 'absolute',
-    left: 16,
-    right: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    backgroundColor: Colors.surfaceElevated,
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderWidth: 1,
-    borderColor: Colors.border,
+    position: 'absolute', left: 16, right: 16, flexDirection: 'row', alignItems: 'center', gap: 10,
+    backgroundColor: Colors.surfaceElevated, borderRadius: 12, paddingHorizontal: 16, paddingVertical: 14,
+    borderWidth: 1, borderColor: Colors.border,
   },
   toastText: { color: Colors.textPrimary, fontSize: 14, flex: 1 },
 });
