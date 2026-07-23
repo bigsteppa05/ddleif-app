@@ -29,7 +29,8 @@
         "buildType": "app-bundle"
       },
       "ios": {
-        "credentialsSource": "remote"
+        "credentialsSource": "remote",
+        "image": "latest"
       }
     }
   },
