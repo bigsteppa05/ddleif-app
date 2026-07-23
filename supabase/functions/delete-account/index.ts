@@ -1,14 +1,17 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { revokeAppleToken } from "./apple.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Permanently delete the calling user's account and personal data (App Store
-// Guideline 5.1.1(v) — in-app account deletion, not deactivation).
+// Guideline 5.1.1(v) — in-app deletion, not deactivation).
 //
-// The caller is identified from their JWT and can only delete themselves. The
-// actual deletion runs with the service role:
-//   • payments.user_id is ON DELETE NO ACTION, so those rows are removed first;
-//   • deleting the auth user then cascades profiles + bookings.
+// The caller is identified from their JWT and can only delete themselves. Order:
+//   1. Revoke the user's Sign in with Apple token (if one was stored).
+//   2. Remove personal data: avatar files, then null the PII on financial records
+//      (payments are anonymized, not deleted — kept for legal/financial record,
+//      no longer identifying the person).
+//   3. Delete the auth user → cascades profiles + bookings + apple_auth_tokens.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const CORS = {
@@ -41,14 +44,39 @@ Deno.serve(async (req: Request) => {
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
 
-  // payments.user_id is NO ACTION and would block the user delete — remove first.
-  const { error: payErr } = await admin.from("payments").delete().eq("user_id", user.id);
+  // 1. Revoke Sign in with Apple, if we stored a refresh token for this user.
+  try {
+    const { data: appleRow } = await admin
+      .from("apple_auth_tokens")
+      .select("refresh_token")
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (appleRow?.refresh_token) await revokeAppleToken(appleRow.refresh_token);
+  } catch (e) {
+    // Never block deletion on a revoke failure — the account still gets removed.
+    console.error("apple revoke step failed", e);
+  }
+
+  // 2a. Remove avatar files from the 'avatars' bucket ({userId}/…).
+  try {
+    const { data: files } = await admin.storage.from("avatars").list(user.id);
+    const paths = (files ?? []).map((f) => `${user.id}/${f.name}`);
+    if (paths.length) await admin.storage.from("avatars").remove(paths);
+  } catch (e) {
+    console.error("avatar cleanup failed", e);
+  }
+
+  // 2b. Anonymize financial records (kept for legal/financial record, PII stripped).
+  const { error: payErr } = await admin
+    .from("payments")
+    .update({ user_id: null, phone: "redacted" })
+    .eq("user_id", user.id);
   if (payErr) {
-    console.error("payments delete failed", payErr);
+    console.error("payments anonymize failed", payErr);
     return json({ ok: false, message: "Could not delete your account data. Please try again." }, 500);
   }
 
-  // Deleting the auth user cascades profiles + bookings.
+  // 3. Delete the auth user → cascades profiles + bookings + apple_auth_tokens.
   const { error: delErr } = await admin.auth.admin.deleteUser(user.id);
   if (delErr) {
     console.error("deleteUser failed", delErr);

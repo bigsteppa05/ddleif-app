@@ -106,6 +106,15 @@ export async function signInWithApple(): Promise<{ error: string | null }> {
       }
     }
 
+    // Hand the (short-lived) authorization code to the server so it can store a
+    // refresh token for later revocation on account deletion (Apple 5.1.1(v)).
+    // Fire-and-forget — never block sign-in on it.
+    if (credential.authorizationCode) {
+      supabase.functions
+        .invoke('apple-token', { body: { authorization_code: credential.authorizationCode } })
+        .catch(() => {});
+    }
+
     return { error: null };
   } catch (e: unknown) {
     const code = (e as { code?: string }).code;

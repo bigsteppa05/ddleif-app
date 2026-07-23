@@ -171,7 +171,6 @@ export default function ProfileScreen() {
   const router = useRouter();
   const isDesktop = useIsDesktopWeb();
   const config = useAppConfig();
-  const paymentsLive = config.payments_live;
   const [notifications, setNotifications] = useState(false);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -318,7 +317,7 @@ export default function ProfileScreen() {
                   <Text style={{ fontSize: 15.5, fontWeight: '800', color: FW.text }}>{profile?.credits ?? 0} credits</Text>
                   <Text style={{ fontSize: 12.5, color: FW.sec, marginTop: 2 }}>1 credit = KES {config.kes_per_credit}</Text>
                 </View>
-                <WBtn label={paymentsLive ? 'Top up' : 'Coming soon'} size="sm" onPress={() => router.push('/credits/topup')} />
+                <WBtn label="Top up" size="sm" onPress={() => router.push('/credits/topup')} />
               </View>
             </View>
 
@@ -337,7 +336,7 @@ export default function ProfileScreen() {
                 />
               </WebSettingsGroup>
               <WebSettingsGroup title="Credits">
-                <WebSettingsRow label={paymentsLive ? 'Top up credits' : 'Top up credits (coming soon)'} onPress={() => router.push('/credits/topup')} />
+                <WebSettingsRow label="Top up credits" onPress={() => router.push('/credits/topup')} />
                 <WebSettingsRow label="Transaction history" onPress={() => router.push('/credits/history')} last />
               </WebSettingsGroup>
               {(isAdmin || profile?.can_check_in) && (
@@ -519,16 +518,6 @@ export default function ProfileScreen() {
             <Text style={langStyles.langText}>English</Text>
             <Ionicons name="checkmark" size={18} color={Colors.primary} />
           </TouchableOpacity>
-          <View style={langStyles.divider} />
-          {['Swahili', 'French', 'Arabic'].map((lang) => (
-            <View key={lang}>
-              <View style={langStyles.row}>
-                <Text style={langStyles.langTextMuted}>{lang}</Text>
-                <Text style={langStyles.comingSoon}>Coming soon</Text>
-              </View>
-              <View style={langStyles.divider} />
-            </View>
-          ))}
         </Animated.View>
       </Modal>
     </View>
@@ -615,7 +604,5 @@ const langStyles = StyleSheet.create({
   title: { color: Colors.textPrimary, fontSize: 18, fontWeight: '700', marginBottom: 8 },
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 16 },
   langText: { color: Colors.textPrimary, fontSize: 15, fontWeight: '500' },
-  langTextMuted: { color: Colors.textMuted, fontSize: 15 },
-  comingSoon: { color: Colors.textMuted, fontSize: 12 },
   divider: { height: 1, backgroundColor: Colors.border },
 });
