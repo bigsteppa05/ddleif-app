@@ -70,7 +70,7 @@ The guard compares the current fingerprint against `.ota-baseline.json` (the
 runtime of your last build, committed to the repo):
 
 ```bash
-npm run fingerprint     # print the current native fingerprint
+npm run ota:fingerprint # print the current native fingerprint
 npm run ota:check       # exit 0 = OTA-safe, exit 1 = native changed → build instead
 ```
 
