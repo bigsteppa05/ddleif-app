@@ -106,6 +106,7 @@ export default function RootLayout() {
         <Stack.Screen name="admin" />
         <Stack.Screen name="checkin" />
         <Stack.Screen name="profile/edit" />
+        <Stack.Screen name="profile/delete-account" />
         <Stack.Screen name="credits/topup" />
         <Stack.Screen name="credits/history" />
         <Stack.Screen

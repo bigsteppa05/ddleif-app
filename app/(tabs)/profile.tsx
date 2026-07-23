@@ -250,26 +250,6 @@ export default function ProfileScreen() {
     );
   }
 
-  function handleDeactivate() {
-    Alert.alert(
-      'Deactivate your account?',
-      "You won't be able to log in. Contact support to reactivate.",
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Deactivate',
-          style: 'destructive',
-          onPress: async () => {
-            if (!userId) return;
-            await updateProfile(userId, { deactivated_at: new Date().toISOString() });
-            await supabase.auth.signOut();
-            router.replace('/(auth)/login');
-          },
-        },
-      ]
-    );
-  }
-
   const joinedYear = profile?.created_at
     ? new Date(profile.created_at).getFullYear()
     : '';
@@ -300,15 +280,6 @@ export default function ProfileScreen() {
         router.replace('/(auth)/login');
       }
     };
-    const webDeactivate = async () => {
-      if (!userId) return;
-      if (typeof window !== 'undefined' && window.confirm("Deactivate your account? You won't be able to log in. Contact support to reactivate.")) {
-        await updateProfile(userId, { deactivated_at: new Date().toISOString() });
-        await supabase.auth.signOut();
-        router.replace('/(auth)/login');
-      }
-    };
-
     return (
       <View>
         <PageTitle title="Profile" />
@@ -384,7 +355,7 @@ export default function ProfileScreen() {
               </WebSettingsGroup>
               <WebSettingsGroup title="Session">
                 <WebSettingsRow label="Sign out" danger onPress={webSignOut} />
-                <WebSettingsRow label="Deactivate account" danger onPress={webDeactivate} last />
+                <WebSettingsRow label="Delete account" danger onPress={() => router.push('/profile/delete-account')} last />
               </WebSettingsGroup>
             </View>
           </View>
@@ -522,12 +493,12 @@ export default function ProfileScreen() {
                 </>
               )}
               <View style={styles.divider} />
-              <TouchableOpacity style={menuStyles.row} onPress={handleDeactivate}>
-                <Text style={[menuStyles.label, { color: Colors.error }]}>Deactivate Account</Text>
-              </TouchableOpacity>
-              <View style={styles.divider} />
               <TouchableOpacity style={menuStyles.row} onPress={handleSignOut}>
                 <Text style={[menuStyles.label, { color: Colors.primary }]}>Sign Out</Text>
+              </TouchableOpacity>
+              <View style={styles.divider} />
+              <TouchableOpacity style={menuStyles.row} onPress={() => router.push('/profile/delete-account')}>
+                <Text style={[menuStyles.label, { color: Colors.error }]}>Delete Account</Text>
               </TouchableOpacity>
             </View>
           </>

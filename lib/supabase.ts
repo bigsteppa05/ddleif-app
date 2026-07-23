@@ -381,6 +381,17 @@ export async function updateProfile(
   if (error) throw new Error(error.message);
 }
 
+// Permanently delete the signed-in user's account + data (App Store 5.1.1(v)).
+// Runs server-side (delete-account edge function), then signs out locally.
+export async function deleteAccount(): Promise<{ error: string | null }> {
+  const { data, error } = await supabase.functions.invoke('delete-account', { body: {} });
+  if (error || !data?.ok) {
+    return { error: (data as { message?: string })?.message ?? 'Could not delete your account. Please try again.' };
+  }
+  await supabase.auth.signOut();
+  return { error: null };
+}
+
 // Throws on failure so callers can surface the error; files live under
 // event-images/{eventId}/ so replaced images can be traced and cleaned up.
 export async function uploadEventImage(uri: string, eventId?: string): Promise<string> {
