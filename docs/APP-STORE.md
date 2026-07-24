@@ -94,9 +94,10 @@ confirm it:
 > app correctly uses M-Pesa/card rather than In-App Purchase.
 >
 > **Reviewer login (no OTP needed).** Use the demo account below. It signs in with
-> **email + password**, so no email one-time code is required.
-> - Email: `⟨REVIEW_EMAIL⟩`
-> - Password: `⟨REVIEW_PASSWORD⟩`
+> **email + password** (`signInWithPassword`), so no email one-time code is required.
+> - Email: `applereviewer@icloud.com`
+> - Password: *(entered directly in App Store Connect → App Review Information —
+>   never committed to this repo)*
 >
 > **The account is preloaded with booking credits** (enough for 3+ bookings), so the
 > reviewer can complete the full booking lifecycle **without any Kenyan phone number
@@ -108,6 +109,10 @@ confirm it:
 > → "Grab your spot" (paid from the preloaded credits) → see the confirmation +
 > booking reference → open "My Bookings" → cancel the booking. To review **account
 > deletion**: Profile → **Delete Account** → confirm.
+>
+> **Please review account deletion last.** Deleting the demo account also releases
+> the session reserved for it; if you need to sign in again afterwards, contact us
+> at the number below and we will restore it within the hour.
 >
 > **Non-obvious functionality.** Camera permission is used **only by admins** to scan
 > entry QR codes at events; regular users never need it. Sign in with Apple and
@@ -122,15 +127,27 @@ confirm it:
 
 Create and keep stable for the whole review window:
 
-| Field | Value |
-|---|---|
-| Email | `⟨REVIEW_EMAIL⟩` (e.g. appreview@fitxball.com) |
-| Password | `⟨REVIEW_PASSWORD⟩` (stable, review-only) |
-| Login method | Email + **password** (bypasses OTP) |
-| Credits preloaded | ≥ enough for 3 bookings (admin → grant credits) |
-| Live event | ≥ 1 upcoming session with several open spots |
-| Cancellation | Allowed |
-| Account deletion | Allowed |
+| Field | Value | Status |
+|---|---|---|
+| Email | `applereviewer@icloud.com` | ✅ created, confirmed |
+| Password | set in ASC only — never in git | ⚠️ see note below |
+| Login method | Email + **password** (`login.tsx` → `signInWithPassword`) | ✅ |
+| Credits preloaded | **30** (6 bookings at 5 credits) | ✅ |
+| Live event | `Thursday Night Football — FF03`, 2026-08-27 20:00, 5 credits, 20 slots | ✅ |
+| Event visibility | `review_only`, scoped to the reviewer only | ✅ verified |
+| Cancellation | Allowed | ☐ verify on device |
+| Account deletion | Allowed | ☐ verify on device |
+
+The session is **not** publicly listed. `public.events` carries
+`visibility` + `visible_to_user_id`, and the `events_select_visible` RLS policy
+admits a row only when it is `public`, owned by the caller, or the caller is an
+admin. Verified with the anon key across the feed, slug, id, and slug-list read
+paths — all four return empty for this event.
+
+> ⚠️ **Password strength.** A review credential is a real production credential:
+> it opens an account in the same database as every live user. Use a long random
+> value from a password manager, not a guessable one, and rotate it once review
+> completes.
 
 - [ ] Verified the account signs in **without an email OTP** from a different device.
 - [ ] Confirmed no cleanup job resets the reviewer's credits or deletes the live session mid-review.
