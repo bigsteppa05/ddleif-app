@@ -213,6 +213,30 @@ at call time, not deploy time. `mpesa-callback` needs no Daraja secrets.
 Also: set `EXPO_PUBLIC_POSTHOG_KEY` for the EAS build (already in `.env`), and confirm
 PostHog is your production project.
 
+### Verifying Gate 2
+
+Presence is not proof. `DARAJA_*` is read through `requireEnv()` at **call** time,
+so a mistyped credential deploys clean and fails only when a reviewer taps Top Up.
+The `gate2-check` function exercises each credential against its real endpoint and
+returns booleans only — never a value:
+
+```bash
+curl -s -X POST "$SUPABASE_URL/functions/v1/gate2-check" \
+  -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" | jq
+```
+
+- **Apple** — signs an ES256 client secret with the `.p8`, then calls
+  `/auth/revoke` with a deliberately invalid token. Apple answering
+  `invalid_grant` means the credentials are good; `invalid_client` means the
+  team/key/bundle triple is wrong. No real account is touched.
+- **Daraja** — mints an OAuth access token and reports `SANDBOX` vs `PRODUCTION`.
+- **PostHog** — fetches the project with the personal API key; a 401 means the
+  key lacks person-delete scope, another status means wrong project id or region.
+
+`gate2_ready` is true only when all three verify **and** Daraja reads
+`PRODUCTION`. Delete this function after launch — it is a launch tool, not part
+of the product.
+
 ---
 
 ## 8. App Store Connect metadata (Gate 4)
