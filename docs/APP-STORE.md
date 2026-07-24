@@ -177,7 +177,15 @@ Supabase → Edge Functions → **Secrets** (never in the app):
 | `POSTHOG_PERSONAL_API_KEY` | `⟨PostHog personal API key, person-delete scope⟩` |
 | `POSTHOG_PROJECT_ID` | `230531` |
 | `POSTHOG_API_HOST` | `https://eu.posthog.com` |
-| `DARAJA_*` | swap sandbox → **production** M-Pesa credentials |
+| `DARAJA_BASE_URL` | `https://api.safaricom.co.ke` (production; sandbox is `https://sandbox.safaricom.co.ke`) |
+| `DARAJA_CONSUMER_KEY` | `⟨production Daraja app consumer key⟩` |
+| `DARAJA_CONSUMER_SECRET` | `⟨production Daraja app consumer secret⟩` |
+| `DARAJA_SHORTCODE` | `⟨production paybill/till shortcode⟩` |
+| `DARAJA_PASSKEY` | `⟨production STK passkey⟩` |
+
+All five `DARAJA_*` names are read via `requireEnv()` in
+`mpesa-stk-push/daraja.ts` and `mpesa-stk-query/daraja.ts`; a missing one throws
+at call time, not deploy time. `mpesa-callback` needs no Daraja secrets.
 
 Also: set `EXPO_PUBLIC_POSTHOG_KEY` for the EAS build (already in `.env`), and confirm
 PostHog is your production project.
