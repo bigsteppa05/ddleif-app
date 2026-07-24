@@ -110,9 +110,8 @@ confirm it:
 > booking reference → open "My Bookings" → cancel the booking. To review **account
 > deletion**: Profile → **Delete Account** → confirm.
 >
-> **Please review account deletion last.** Deleting the demo account also releases
-> the session reserved for it; if you need to sign in again afterwards, contact us
-> at the number below and we will restore it within the hour.
+> Please test account deletion after completing the booking and cancellation
+> flow, because deletion permanently removes the supplied demo account.
 >
 > **Non-obvious functionality.** Camera permission is used **only by admins** to scan
 > entry QR codes at events; regular users never need it. Sign in with Apple and
@@ -135,8 +134,15 @@ Create and keep stable for the whole review window:
 | Credits preloaded | **30** (6 bookings at 5 credits) | ✅ |
 | Live event | `Thursday Night Football — FF03`, 2026-08-27 20:00, 5 credits, 20 slots | ✅ |
 | Event visibility | `review_only`, scoped to the reviewer only | ✅ verified |
-| Cancellation | Allowed | ☐ verify on device |
+| Cancellation | Allowed — `cancel_booking` refunds in full outside 12h of start | ☐ verify on device |
 | Account deletion | Allowed | ☐ verify on device |
+| Attendees on this event | none — nothing to hide | ✅ |
+
+`hide_attendees` was considered for a cleaner demo but **not** enabled: it is a
+global flag (`useFlag` in `EventCard`, `WEventCard`, `event/[id]`,
+`event/participants`) that would strip participant lists and "going" counts from
+every event for all users. The reviewer session has no attendees anyway —
+`get_event_participants` only returns `confirmed`/`checked_in` bookings.
 
 The session is **not** publicly listed. `public.events` carries
 `visibility` + `visible_to_user_id`, and the `events_select_visible` RLS policy
