@@ -1,5 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { createClient } from "jsr:@supabase/supabase-js@2";
+import { withSupabase } from "npm:@supabase/server";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Gate 2 pre-flight. Reports whether each required function secret is present
@@ -9,32 +9,42 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 // time, so a typo'd credential deploys clean and only fails when a reviewer
 // taps Top Up. This exercises each credential against its real endpoint.
 //
-// Authorization is enforced in the body (admin JWT or service-role key), so
-// verify_jwt is off to allow the service-role bearer path.
-// Delete this function once the app has shipped — it is a launch tool, not
-// part of the product.
+// Authorization: a dedicated secret key named "gate2-check" (Dashboard →
+// Settings → API keys), sent on the `apikey` header. Deliberately NOT the
+// project-wide service_role key — this endpoint reaches three external
+// providers, so it gets its own independently revocable credential.
+// Deploy with --no-verify-jwt: the platform JWT check runs before the handler
+// and a secret key is not a JWT.
+//
+// Output discipline: booleans, a fixed status vocabulary, and static hints
+// only. Never an upstream response body, a generated client secret, a token
+// fragment, a project identifier, or an exception object. Nothing is logged —
+// no request headers, no provider responses.
+//
+// Delete this function (and the gate2-check key) once Gate 2 is signed off —
+// it is a launch tool, not part of the product.
 // ─────────────────────────────────────────────────────────────────────────────
-
-const CORS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body, null, 2), {
     status,
-    headers: { ...CORS, "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json" },
   });
 }
 
 const has = (n: string) => !!Deno.env.get(n)?.trim();
 
-/** Proves the .p8 parses and signs, then that Apple accepts the client secret. */
+/**
+ * Pre-flight only. Proves the .p8 parses and signs, and that Apple accepts the
+ * resulting client secret far enough to inspect the grant. It does NOT prove
+ * the user-specific revocation flow works — Apple needs a real access or
+ * refresh token for that, which only a TestFlight sign-in can produce.
+ */
 async function checkApple(): Promise<Record<string, unknown>> {
   const names = ["APPLE_TEAM_ID", "APPLE_KEY_ID", "APPLE_CLIENT_ID", "APPLE_PRIVATE_KEY"];
   const present = Object.fromEntries(names.map((n) => [n, has(n)]));
   if (!names.every((n) => has(n))) {
-    return { ...present, status: "missing_secrets", verified: false };
+    return { ...present, status: "missing_secrets", preflight: false };
   }
 
   let clientSecret: string;
@@ -61,14 +71,19 @@ async function checkApple(): Promise<Record<string, unknown>> {
       { name: "ECDSA", hash: "SHA-256" }, key, new TextEncoder().encode(input),
     );
     clientSecret = `${input}.${b64url(new Uint8Array(sig))}`;
-  } catch (e) {
-    return { ...present, status: "private_key_unusable", verified: false, detail: String(e) };
+  } catch {
+    // The exception text can quote key material. Report the class, not the cause.
+    return {
+      ...present, preflight: false, status: "private_key_unusable",
+      hint: "APPLE_PRIVATE_KEY is not a readable PKCS#8 ES256 .p8. Paste the whole file including the BEGIN/END lines.",
+    };
   }
 
   // Revoke a deliberately bogus token. Apple rejects the TOKEN (invalid_grant)
   // when the client secret is good, and rejects the CLIENT (invalid_client)
-  // when the key/team/bundle triple is wrong — which is exactly the signal we
-  // want, with no side effect on any real account.
+  // when the key/team/bundle triple is wrong. No side effect on any real
+  // account. invalid_grant can also mean a bad client id, so this is a
+  // pre-flight signal, not proof.
   try {
     const res = await fetch("https://appleid.apple.com/auth/revoke", {
       method: "POST",
@@ -83,17 +98,17 @@ async function checkApple(): Promise<Record<string, unknown>> {
     const data = await res.json().catch(() => ({}));
     const err = (data as { error?: string }).error;
     if (res.ok || err === "invalid_grant" || err === "invalid_request") {
-      return { ...present, status: "credentials_accepted_by_apple", verified: true };
+      return { ...present, preflight: true, status: "client_secret_accepted" };
     }
     if (err === "invalid_client") {
       return {
-        ...present, verified: false, status: "rejected_by_apple",
+        ...present, preflight: false, status: "rejected_by_apple",
         hint: "team id, key id, bundle id, or .p8 do not match. Confirm APPLE_CLIENT_ID is the bundle id com.fitxball.app and the .p8 belongs to that key id.",
       };
     }
-    return { ...present, verified: false, status: `unexpected: ${err ?? res.status}` };
-  } catch (e) {
-    return { ...present, verified: false, status: "network_error", detail: String(e) };
+    return { ...present, preflight: false, status: "unexpected_response" };
+  } catch {
+    return { ...present, preflight: false, status: "network_error" };
   }
 }
 
@@ -105,7 +120,7 @@ async function checkDaraja(): Promise<Record<string, unknown>> {
   ];
   const present = Object.fromEntries(names.map((n) => [n, has(n)]));
   const base = Deno.env.get("DARAJA_BASE_URL")?.trim() ?? "";
-  // The host is not a secret, and sandbox-vs-production is the whole question.
+  // A classification, not a value: sandbox-vs-production is the whole question.
   const env = base.includes("sandbox")
     ? "SANDBOX"
     : base.includes("api.safaricom.co.ke")
@@ -132,86 +147,72 @@ async function checkDaraja(): Promise<Record<string, unknown>> {
       status: ok ? "access_token_minted" : `rejected (HTTP ${res.status})`,
       ...(ok ? {} : { hint: "consumer key/secret do not match this host, or the app is not live on the production portal" }),
     };
-  } catch (e) {
-    return { ...present, environment: env, verified: false, status: "network_error", detail: String(e) };
+  } catch {
+    return { ...present, environment: env, verified: false, status: "network_error" };
   }
 }
 
-/** Proves the personal API key can reach the project (needed to delete persons). */
+/**
+ * Proves the personal API key can reach the project (needed to delete persons).
+ * The key should be scoped to project read + person write only — PostHog
+ * personal keys can otherwise carry account-wide access.
+ */
 async function checkPostHog(): Promise<Record<string, unknown>> {
   const names = ["POSTHOG_PERSONAL_API_KEY", "POSTHOG_PROJECT_ID", "POSTHOG_API_HOST"];
   const present = Object.fromEntries(names.map((n) => [n, has(n)]));
   const host = Deno.env.get("POSTHOG_API_HOST")?.trim().replace(/\/$/, "") ?? "";
   const project = Deno.env.get("POSTHOG_PROJECT_ID")?.trim() ?? "";
   if (!names.every((n) => has(n))) {
-    return { ...present, host, project_id: project, status: "missing_secrets", verified: false };
+    return { ...present, status: "missing_secrets", verified: false };
   }
   try {
     const res = await fetch(`${host}/api/projects/${project}/`, {
       headers: { Authorization: `Bearer ${Deno.env.get("POSTHOG_PERSONAL_API_KEY")}` },
     });
     if (res.ok) {
-      return { ...present, host, project_id: project, verified: true, status: "project_reachable" };
+      return { ...present, verified: true, status: "project_reachable" };
     }
     return {
-      ...present, host, project_id: project, verified: false,
+      ...present, verified: false,
       status: `rejected (HTTP ${res.status})`,
-      hint: res.status === 401
-        ? "personal API key invalid or lacks person:write scope"
+      hint: res.status === 401 || res.status === 403
+        ? "personal API key invalid, or missing project:read / person:write scope"
         : "project id or region host is wrong (EU keys do not work on us.posthog.com)",
     };
-  } catch (e) {
-    return { ...present, host, project_id: project, verified: false, status: "network_error", detail: String(e) };
+  } catch {
+    return { ...present, verified: false, status: "network_error" };
   }
 }
 
-Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
+Deno.serve(
+  withSupabase({ auth: "secret:gate2-check" }, async () => {
+    const [apple, daraja, posthog] = await Promise.all([
+      checkApple(), checkDaraja(), checkPostHog(),
+    ]);
 
-  const authHeader = req.headers.get("Authorization") ?? "";
-  const bearer = authHeader.replace(/^Bearer\s+/i, "").trim();
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+    const platform = {
+      SUPABASE_URL: has("SUPABASE_URL"),
+      SUPABASE_ANON_KEY: has("SUPABASE_ANON_KEY"),
+      SUPABASE_SERVICE_ROLE_KEY: has("SUPABASE_SERVICE_ROLE_KEY"),
+    };
 
-  let authorized = bearer.length > 0 && bearer === serviceKey;
-  if (!authorized) {
-    const userClient = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_ANON_KEY")!,
-      { global: { headers: { Authorization: authHeader } } },
-    );
-    const { data: { user } } = await userClient.auth.getUser();
-    if (user) {
-      const admin = createClient(
-        Deno.env.get("SUPABASE_URL")!,
-        Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-      );
-      const { data: profile } = await admin
-        .from("profiles").select("is_admin").eq("id", user.id).single();
-      authorized = !!profile?.is_admin;
-    }
-  }
-  if (!authorized) return json({ ok: false, message: "admin or service role required" }, 401);
+    // Apple contributes its PRE-FLIGHT result only. Gate 5 (TestFlight sign-in
+    // → account deletion → /auth/revoke) is what actually verifies revocation.
+    const gate2_ready = !!apple.preflight && !!daraja.verified && !!posthog.verified &&
+      daraja.environment === "PRODUCTION";
 
-  const [apple, daraja, posthog] = await Promise.all([
-    checkApple(), checkDaraja(), checkPostHog(),
-  ]);
-
-  const platform = {
-    SUPABASE_URL: has("SUPABASE_URL"),
-    SUPABASE_ANON_KEY: has("SUPABASE_ANON_KEY"),
-    SUPABASE_SERVICE_ROLE_KEY: has("SUPABASE_SERVICE_ROLE_KEY"),
-  };
-
-  const gate2_ready = !!apple.verified && !!daraja.verified && !!posthog.verified &&
-    daraja.environment === "PRODUCTION";
-
-  return json({
-    gate2_ready,
-    checked_at: new Date().toISOString(),
-    apple,
-    daraja,
-    posthog,
-    platform,
-    note: "Booleans only — no secret value is ever returned. Daraja must read PRODUCTION before the build.",
-  });
-});
+    return json({
+      gate2_ready,
+      checked_at: new Date().toISOString(),
+      apple,
+      daraja,
+      posthog,
+      platform,
+      notes: [
+        "Booleans and fixed statuses only — no secret value, upstream body, or project identifier is ever returned.",
+        "apple.preflight proves Apple accepted the client secret. It is NOT proof that revocation works: verify that in TestFlight (sign in with Apple → delete account → /auth/revoke succeeds).",
+        "Daraja must read PRODUCTION before the build.",
+      ],
+    });
+  }),
+);

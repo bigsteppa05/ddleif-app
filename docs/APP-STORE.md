@@ -213,29 +213,72 @@ at call time, not deploy time. `mpesa-callback` needs no Daraja secrets.
 Also: set `EXPO_PUBLIC_POSTHOG_KEY` for the EAS build (already in `.env`), and confirm
 PostHog is your production project.
 
+Scope the **PostHog personal API key** to project read + person write only.
+Personal keys can otherwise carry account-wide access, and must never reach the
+frontend — this one lives only in Edge Function secrets.
+
 ### Verifying Gate 2
 
 Presence is not proof. `DARAJA_*` is read through `requireEnv()` at **call** time,
 so a mistyped credential deploys clean and fails only when a reviewer taps Top Up.
 The `gate2-check` function exercises each credential against its real endpoint and
-returns booleans only — never a value:
+returns booleans and fixed statuses only — never a value, an upstream response
+body, or a project identifier.
+
+It authenticates with its **own** secret key, not the project-wide service-role
+key. Dashboard → **Settings → API keys** → create a secret key named
+`gate2-check`. Deploy with the platform JWT check off (a secret key is not a JWT):
+
+```bash
+supabase functions deploy gate2-check --no-verify-jwt
+```
 
 ```bash
 curl -s -X POST "$SUPABASE_URL/functions/v1/gate2-check" \
-  -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" | jq
+  -H "apikey: $GATE2_CHECK_KEY" | jq
 ```
 
 - **Apple** — signs an ES256 client secret with the `.p8`, then calls
   `/auth/revoke` with a deliberately invalid token. Apple answering
-  `invalid_grant` means the credentials are good; `invalid_client` means the
-  team/key/bundle triple is wrong. No real account is touched.
+  `invalid_grant` means it accepted the client authentication and got as far as
+  inspecting the grant; `invalid_client` means the team/key/bundle triple is
+  wrong. No real account is touched. This reports `preflight`, **not**
+  `verified` — `invalid_grant` can also follow from a mismatched client id, and
+  real revocation needs a live access or refresh token. See Gate 5 below.
 - **Daraja** — mints an OAuth access token and reports `SANDBOX` vs `PRODUCTION`.
-- **PostHog** — fetches the project with the personal API key; a 401 means the
-  key lacks person-delete scope, another status means wrong project id or region.
+- **PostHog** — fetches the project with the personal API key; 401/403 means the
+  key is invalid or under-scoped, another status means wrong project id or region.
 
-`gate2_ready` is true only when all three verify **and** Daraja reads
-`PRODUCTION`. Delete this function after launch — it is a launch tool, not part
-of the product.
+`gate2_ready` is true only when Apple pre-flights, Daraja and PostHog verify,
+**and** Daraja reads `PRODUCTION`.
+
+**What gate2-check cannot tell you.** Apple revocation is only proven end to end
+in TestFlight: sign in with Apple → authorization-code exchange → refresh token
+stored → delete the account → `/auth/revoke` succeeds. Keep that on Gate 5; a
+green pre-flight does not retire it.
+
+**After Gate 2 signs off**, delete the `gate2-check` secret key, then the
+function. It is a launch tool, not part of the product. If you keep it deployed
+past launch, it stays restricted to that one named key — never widen it back to
+`service_role`.
+
+### Gate 2 run order
+
+1. Commit this document.
+2. `supabase login` on the account that owns the project, then
+   `supabase link --project-ref jnjpivplulsfystxinvd` and confirm the ref before
+   setting anything.
+3. Enable the Apple provider; accepted audience `com.fitxball.app`.
+4. Set the exact secret names in the table above.
+5. Create the `gate2-check` secret key; deploy the function; invoke it from a
+   local shell you trust.
+6. Require: `apple.preflight` true · Daraja verified · Daraja `PRODUCTION` ·
+   PostHog verified.
+7. Run one real M-Pesa top-up: confirm callback received, balance credited,
+   transaction reference stored, and a replayed callback changes nothing.
+8. Delete or restrict `gate2-check`.
+9. Produce the EAS production build.
+10. Run the real Apple login-and-revocation test through TestFlight (Gate 5).
 
 ---
 
@@ -260,6 +303,8 @@ of the product.
 | 1 | Code: deletion, Apple revocation, PostHog deletion, no placeholders | ✅ done (this branch) |
 | 2 | Apple provider enabled + all secrets set | ☐ |
 | 2 | Production Daraja credentials | ☐ |
+| 2 | One real M-Pesa top-up: callback, credit, reference, replay-safe | ☐ |
+| 2 | `gate2-check` key + function deleted (or restricted to its own key) | ☐ |
 | 3 | Reviewer account (password login, preloaded credits, live event) | ☐ |
 | 4 | ASC metadata + App Privacy + screenshots + review notes | ☐ |
 | 5 | Two TestFlight full-journey runs + Apple-revocation QA | ☐ |
