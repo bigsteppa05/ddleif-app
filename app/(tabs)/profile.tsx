@@ -317,7 +317,9 @@ export default function ProfileScreen() {
                   <Text style={{ fontSize: 15.5, fontWeight: '800', color: FW.text }}>{profile?.credits ?? 0} credits</Text>
                   <Text style={{ fontSize: 12.5, color: FW.sec, marginTop: 2 }}>1 credit = KES {config.kes_per_credit}</Text>
                 </View>
-                <WBtn label="Top up" size="sm" onPress={() => router.push('/credits/topup')} />
+                {config.payments_live && (
+                  <WBtn label="Top up" size="sm" onPress={() => router.push('/credits/topup')} />
+                )}
               </View>
             </View>
 
@@ -336,7 +338,9 @@ export default function ProfileScreen() {
                 />
               </WebSettingsGroup>
               <WebSettingsGroup title="Credits">
-                <WebSettingsRow label="Top up credits" onPress={() => router.push('/credits/topup')} />
+                {config.payments_live && (
+                  <WebSettingsRow label="Top up credits" onPress={() => router.push('/credits/topup')} />
+                )}
                 <WebSettingsRow label="Transaction history" onPress={() => router.push('/credits/history')} last />
               </WebSettingsGroup>
               {(isAdmin || profile?.can_check_in) && (
@@ -412,13 +416,15 @@ export default function ProfileScreen() {
                 <Text style={styles.creditsKey}>Balance</Text>
                 <Text style={styles.creditsVal}>{profile?.credits ?? 0} Credits</Text>
               </View>
-              <TouchableOpacity
-                style={styles.topUpButton}
-                onPress={() => router.push('/credits/topup')}
-                activeOpacity={0.85}
-              >
-                <Text style={styles.topUpText}>Top Up Account</Text>
-              </TouchableOpacity>
+              {config.payments_live && (
+                <TouchableOpacity
+                  style={styles.topUpButton}
+                  onPress={() => router.push('/credits/topup')}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.topUpText}>Top Up Account</Text>
+                </TouchableOpacity>
+              )}
               <View style={styles.divider} />
               <MenuRow
                 label="Transaction History"

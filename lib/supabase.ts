@@ -74,6 +74,10 @@ export type Event = {
   image_url: string | null;
   is_free: boolean;
   created_at: string;
+  // 'review_only' events are visible solely to `visible_to_user_id` (and admins).
+  // Enforced by RLS, not by the client — see the events_select_visible policy.
+  visibility: 'public' | 'review_only';
+  visible_to_user_id: string | null;
 };
 
 export type Booking = {
@@ -168,6 +172,7 @@ export async function getAllEventSlugs(): Promise<string[]> {
   const { data, error } = await supabase
     .from('events')
     .select('slug')
+    .eq('visibility', 'public')
     .not('slug', 'is', null);
   if (error) return [];
   return (data ?? []).map((r) => r.slug as string);
