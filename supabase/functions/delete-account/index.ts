@@ -1,6 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { revokeAppleToken } from "./apple.ts";
+import { deletePosthogPerson } from "./posthog.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Permanently delete the calling user's account and personal data (App Store
@@ -55,6 +56,14 @@ Deno.serve(async (req: Request) => {
   } catch (e) {
     // Never block deletion on a revoke failure — the account still gets removed.
     console.error("apple revoke step failed", e);
+  }
+
+  // 1b. Delete the PostHog person + their events (we identify with the user id).
+  //     Do this before deleting the user so the distinct id is still meaningful.
+  try {
+    await deletePosthogPerson(user.id);
+  } catch (e) {
+    console.error("posthog delete step failed", e);
   }
 
   // 2a. Remove avatar files from the 'avatars' bucket ({userId}/…).
