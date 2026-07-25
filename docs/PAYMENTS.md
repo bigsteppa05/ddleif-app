@@ -122,11 +122,17 @@ Until step 1–2 are done the function is fail-closed (401) and the job never
 calls it. To check it afterwards:
 
 ```sql
-select jobname, status, return_message, start_time
-from cron.job_run_details
-where jobname = 'mpesa-reconcile-sweep'
-order by start_time desc limit 10;
+-- job_run_details keys on jobid, not jobname — join to cron.job.
+select j.jobname, d.status, d.return_message, d.start_time
+from cron.job_run_details d
+join cron.job j on j.jobid = d.jobid
+where j.jobname = 'mpesa-reconcile-sweep'
+order by d.start_time desc limit 10;
 ```
+
+`succeeded` with `0 rows` is the healthy idle result: the guard held and no HTTP
+call was made. Once the sweep key is in Vault and a payment needs reconciling,
+successful runs return `1 row` — the queued `net.http_post` request id.
 
 ## Operating manual_review
 
