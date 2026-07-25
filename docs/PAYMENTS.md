@@ -87,11 +87,50 @@ uniqueness.
 `public`, `anon` and `authenticated`, and granted only to `service_role`. Neither
 is reachable over PostgREST by a signed-in user.
 
+## The scheduled sweep
+
+Client polling only covers users who stay in the app. `mpesa-sweep` covers the
+rest: a customer who pays and closes the app must not stay uncredited because
+nobody was watching.
+
+`pg_cron` calls it every 5 minutes through `pg_net`. It selects `pending` and
+`reconciling` rows with a `CheckoutRequestID`, older than a 3-minute prompt
+grace and younger than 7 days, oldest first, 25 per run — then runs each through
+the **same** `reconcilePayment()` the client path uses. One reconciliation
+implementation, one crediting path, no inference of missing amounts or receipts.
+
+The cron job is a no-op by its own `WHERE` clause unless there is work to do
+**and** the sweep key is configured, so it stays silent before launch.
+
+### Enabling it
+
+1. Dashboard → **Project Settings → API Keys → Secret keys** → create a secret
+   key named `mpesa-sweep`.
+2. Store it in Vault so the cron body carries no literal:
+
+```sql
+select vault.create_secret('<the mpesa-sweep secret key>', 'mpesa_sweep_key', 'Auth for scheduled reconciliation');
+```
+
+3. Deploy the function (`supabase/config.toml` already sets `verify_jwt = false`):
+
+```bash
+supabase functions deploy mpesa-sweep
+```
+
+Until step 1–2 are done the function is fail-closed (401) and the job never
+calls it. To check it afterwards:
+
+```sql
+select jobname, status, return_message, start_time
+from cron.job_run_details
+where jobname = 'mpesa-reconcile-sweep'
+order by start_time desc limit 10;
+```
+
 ## Operating manual_review
 
-There is no automated sweep yet. Until one exists, reconciliation is driven by
-the client polling `mpesa-stk-query`, which means a user who closes the app
-before their payment resolves leaves a row that nothing will revisit.
+The sweep escalates rather than guesses, so `manual_review` needs a human.
 
 ```sql
 select id, user_id, expected_amount_kes, reported_amount_kes,
@@ -103,3 +142,23 @@ order by created_at desc;
 
 Check the row against the M-Pesa statement, then credit deliberately — there is
 no "force settle" function on purpose.
+
+## Acceptance criteria
+
+Frozen once these all hold. Anything failing here reopens this area; nothing
+else does.
+
+- [x] Receipt uniqueness enforced
+- [x] Expected and reported amounts must match
+- [x] Callback cannot directly credit
+- [x] Daraja query confirmation required
+- [x] Missing callback facts never auto-credit
+- [x] Duplicate settlement credits exactly once
+- [x] Failed payments cannot become paid
+- [x] Closing the app does not strand a successful payment — scheduled sweep
+- [x] Credit History displays completed payments
+- [ ] Production Edge Functions deploy and execute
+- [ ] One real low-value top-up: `pending → reconciling → paid`, credited once,
+      and a repeated callback/query adds no second credit
+
+The applied DDL is kept in [sql/](sql/).

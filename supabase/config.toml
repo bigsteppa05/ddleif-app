@@ -13,6 +13,12 @@
 # be off. Launch tool — revoke the key and delete this function after Gate 2.
 verify_jwt = false
 
+[functions.mpesa-sweep]
+# Scheduled reconciliation, invoked by pg_cron via pg_net — no user session
+# exists. Authenticated by the dedicated secret API key "mpesa-sweep",
+# validated in-runtime by withSupabase({ auth: "secret:mpesa-sweep" }).
+verify_jwt = false
+
 [functions.mpesa-callback]
 # Public webhook: Safaricom calls this with no Supabase credential of any kind.
 # Authentication is capability-based — settlement only succeeds for a
