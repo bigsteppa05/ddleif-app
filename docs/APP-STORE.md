@@ -226,8 +226,18 @@ returns booleans and fixed statuses only — never a value, an upstream response
 body, or a project identifier.
 
 It authenticates with its **own** secret key, not the project-wide service-role
-key. Dashboard → **Settings → API keys** → create a secret key named
-`gate2-check`. Deploy with the platform JWT check off (a secret key is not a JWT):
+key. Dashboard → **Project Settings → API Keys → Secret keys** → create a secret
+key named `gate2-check`. This is a Supabase API key, **not** an Edge Function
+environment variable: `auth: "secret:gate2-check"` looks that name up in the
+`SUPABASE_SECRET_KEYS` map the platform injects, which is what lets this one
+credential be rotated or revoked without touching anything else.
+
+`withSupabase` performs named-key authentication before the function's business
+handler runs, replacing the previous custom service-role comparison. Note what
+that is and isn't: with `verify_jwt` off the platform gateway does **not**
+validate the `apikey` header, so this is library-level authorization inside the
+function runtime, not a gateway check. Deploy with the platform JWT check off —
+a secret key is not a JWT, so leaving it on rejects every call:
 
 ```bash
 supabase functions deploy gate2-check --no-verify-jwt
@@ -270,8 +280,11 @@ past launch, it stays restricted to that one named key — never widen it back t
    setting anything.
 3. Enable the Apple provider; accepted audience `com.fitxball.app`.
 4. Set the exact secret names in the table above.
-5. Create the `gate2-check` secret key; deploy the function; invoke it from a
-   local shell you trust.
+5. Create the `gate2-check` secret key; deploy with `--no-verify-jwt`; invoke it
+   from a local shell you trust. Before trusting any result, confirm all four:
+   no key → `401`; the project's `default` secret key → `401` (bare `secret`
+   would have accepted it, `secret:gate2-check` does not); the `gate2-check` key
+   → reaches the handler; a browser-origin request → no CORS permission.
 6. Require: `apple.preflight` true · Daraja verified · Daraja `PRODUCTION` ·
    PostHog verified.
 7. Run one real M-Pesa top-up: confirm callback received, balance credited,

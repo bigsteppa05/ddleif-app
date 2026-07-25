@@ -1,5 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { withSupabase } from "npm:@supabase/server";
+import { withSupabase } from "npm:@supabase/server@^1";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Gate 2 pre-flight. Reports whether each required function secret is present
@@ -9,12 +9,20 @@ import { withSupabase } from "npm:@supabase/server";
 // time, so a typo'd credential deploys clean and only fails when a reviewer
 // taps Top Up. This exercises each credential against its real endpoint.
 //
-// Authorization: a dedicated secret key named "gate2-check" (Dashboard →
-// Settings → API keys), sent on the `apikey` header. Deliberately NOT the
-// project-wide service_role key — this endpoint reaches three external
-// providers, so it gets its own independently revocable credential.
-// Deploy with --no-verify-jwt: the platform JWT check runs before the handler
-// and a secret key is not a JWT.
+// Authorization: a dedicated secret API key named "gate2-check" (Dashboard →
+// Project Settings → API Keys → Secret keys — NOT an Edge Function env var).
+// withSupabase resolves it from the injected SUPABASE_SECRET_KEYS map and
+// authenticates the `apikey` header before this handler runs. That is
+// library-level authorization inside the function runtime, not a gateway
+// check: with verify_jwt off, the platform gateway does not validate secret
+// keys. It still beats the custom service-role comparison it replaced —
+// credential parsing and comparison are centralised, and the named key is
+// revocable on its own, unlike the project-wide service_role key. Bare
+// `secret` would accept the project's `default` key; `secret:gate2-check`
+// accepts only this one.
+//
+// cors: "disabled" — the wrapper serves supabase-js CORS headers by default.
+// This is a curl tool; browsers have no business reaching it.
 //
 // Output discipline: booleans, a fixed status vocabulary, and static hints
 // only. Never an upstream response body, a generated client secret, a token
@@ -184,8 +192,8 @@ async function checkPostHog(): Promise<Record<string, unknown>> {
   }
 }
 
-Deno.serve(
-  withSupabase({ auth: "secret:gate2-check" }, async () => {
+export default {
+  fetch: withSupabase({ auth: "secret:gate2-check", cors: "disabled" }, async () => {
     const [apple, daraja, posthog] = await Promise.all([
       checkApple(), checkDaraja(), checkPostHog(),
     ]);
@@ -215,4 +223,4 @@ Deno.serve(
       ],
     });
   }),
-);
+};
