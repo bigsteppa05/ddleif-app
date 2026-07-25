@@ -236,11 +236,13 @@ credential be rotated or revoked without touching anything else.
 handler runs, replacing the previous custom service-role comparison. Note what
 that is and isn't: with `verify_jwt` off the platform gateway does **not**
 validate the `apikey` header, so this is library-level authorization inside the
-function runtime, not a gateway check. Deploy with the platform JWT check off —
-a secret key is not a JWT, so leaving it on rejects every call:
+function runtime, not a gateway check. The platform JWT check must be off — a
+secret key is not a JWT, so leaving it on rejects every call. That is declared
+in `supabase/config.toml`, which is authoritative; do **not** pass
+`--no-verify-jwt`, and do not rely on remembering to:
 
 ```bash
-supabase functions deploy gate2-check --no-verify-jwt
+supabase functions deploy gate2-check
 ```
 
 ```bash
@@ -280,8 +282,9 @@ past launch, it stays restricted to that one named key — never widen it back t
    setting anything.
 3. Enable the Apple provider; accepted audience `com.fitxball.app`.
 4. Set the exact secret names in the table above.
-5. Create the `gate2-check` secret key; deploy with `--no-verify-jwt`; invoke it
-   from a local shell you trust. Before trusting any result, confirm all four:
+5. Create the `gate2-check` secret key; deploy (no CLI flag —
+   `supabase/config.toml` carries `verify_jwt = false` for this function);
+   invoke it from a local shell you trust. Before trusting any result, confirm:
    no key → `401`; the project's `default` secret key → `401` (bare `secret`
    would have accepted it, `secret:gate2-check` does not); the `gate2-check` key
    → reaches the handler; a browser-origin request → no CORS permission.

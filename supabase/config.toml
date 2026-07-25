@@ -1,0 +1,36 @@
+# Supabase Edge Function authentication configuration.
+# Keep this file committed so deployment behaviour does not depend on CLI flags.
+#
+# `verify_jwt` defaults to true. All six functions are declared explicitly, so a
+# redeploy can never silently pick up a different setting than the one reviewed
+# here. Each `false` names the handler-level mechanism that replaces the
+# platform check — a function is never left unauthenticated.
+
+[functions.gate2-check]
+# Named secret API key "gate2-check" on the `apikey` header, validated inside
+# the runtime by withSupabase({ auth: "secret:gate2-check" }) before the
+# business handler runs. A secret key is not a JWT, so the platform check must
+# be off. Launch tool — revoke the key and delete this function after Gate 2.
+verify_jwt = false
+
+[functions.mpesa-callback]
+# Public webhook: Safaricom calls this with no Supabase credential of any kind.
+# Authentication is capability-based — settlement only succeeds for a
+# CheckoutRequestID this backend created that is still pending, and the credit
+# is applied by the SECURITY DEFINER `complete_payment` RPC, whose status guard
+# makes Daraja's retries idempotent.
+verify_jwt = false
+
+# Called by signed-in users through supabase.functions.invoke; each handler also
+# re-derives the caller with auth.getUser() rather than trusting the JWT alone.
+[functions.apple-token]
+verify_jwt = true
+
+[functions.delete-account]
+verify_jwt = true
+
+[functions.mpesa-stk-push]
+verify_jwt = true
+
+[functions.mpesa-stk-query]
+verify_jwt = true
