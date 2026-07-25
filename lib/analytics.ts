@@ -49,6 +49,7 @@ export type AnalyticsEvent =
   | 'topup_prompt_sent'
   | 'topup_succeeded'
   | 'topup_failed'
+  | 'topup_manual_review'
   // Booking
   | 'booking_confirmed';
 

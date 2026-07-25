@@ -290,8 +290,11 @@ past launch, it stays restricted to that one named key — never widen it back t
    → reaches the handler; a browser-origin request → no CORS permission.
 6. Require: `apple.preflight` true · Daraja verified · Daraja `PRODUCTION` ·
    PostHog verified.
-7. Run one real M-Pesa top-up: confirm callback received, balance credited,
-   transaction reference stored, and a replayed callback changes nothing.
+7. Run one real low-value M-Pesa top-up and watch the row move
+   `pending → reconciling → paid` (see [PAYMENTS.md](PAYMENTS.md)): callback
+   recorded with receipt and amount, credits granted only after the independent
+   Daraja query, `reported_amount_kes = expected_amount_kes`, and a replayed
+   callback changing nothing.
 8. Delete or restrict `gate2-check`.
 9. Produce the EAS production build.
 10. Run the real Apple login-and-revocation test through TestFlight (Gate 5).
@@ -319,7 +322,7 @@ past launch, it stays restricted to that one named key — never widen it back t
 | 1 | Code: deletion, Apple revocation, PostHog deletion, no placeholders | ✅ done (this branch) |
 | 2 | Apple provider enabled + all secrets set | ☐ |
 | 2 | Production Daraja credentials | ☐ |
-| 2 | One real M-Pesa top-up: callback, credit, reference, replay-safe | ☐ |
+| 2 | One real M-Pesa top-up: pending → reconciling → paid, replay-safe | ☐ |
 | 2 | `gate2-check` key + function deleted (or restricted to its own key) | ☐ |
 | 3 | Reviewer account (password login, preloaded credits, live event) | ☐ |
 | 4 | ASC metadata + App Privacy + screenshots + review notes | ☐ |

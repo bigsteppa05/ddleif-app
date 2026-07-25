@@ -282,7 +282,7 @@ export type Payment = {
   id: string;
   user_id: string;
   phone: string;
-  amount_kes: number;
+  expected_amount_kes: number;
   credits: number;
   status: string;
   mpesa_receipt: string | null;
@@ -293,9 +293,9 @@ export type Payment = {
 export async function getUserPayments(userId: string): Promise<Payment[]> {
   const { data, error } = await supabase
     .from('payments')
-    .select('id, user_id, phone, amount_kes, credits, status, mpesa_receipt, created_at, completed_at')
+    .select('id, user_id, phone, expected_amount_kes, credits, status, mpesa_receipt, created_at, completed_at')
     .eq('user_id', userId)
-    .eq('status', 'success')
+    .eq('status', 'paid')
     .order('created_at', { ascending: false });
   if (error) return [];
   return (data ?? []) as Payment[];

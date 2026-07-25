@@ -17,11 +17,15 @@ import { getAccessToken, normalizePhone, stkPush, stkQuery } from "./daraja.ts";
 //    a new push is allowed, so a missed callback never blocks the user forever
 //    and a still-processing prompt is never double-charged.
 //
+// This function never credits. It can only settle a pending row into 'failed'
+// on a query-confirmed failure; every success settles through mpesa-stk-query,
+// which is the single path that creates value.
+//
 // Responses are always HTTP 200 with a discriminated body unless the server
 // itself faults, so the client can rely on the body for user-facing messaging:
 //   { ok:true, checkout_request_id }                 → poll this id
 //   { ok:true, resumed:true, checkout_request_id }   → an existing prompt is live
-//   { ok:true, settled:"success", credits }          → a previous top-up completed
+//   { ok:true, settled:"paid", credits }             → a previous top-up completed
 //   { ok:false, code, message }                      → show message, don't poll
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -41,13 +45,20 @@ function json(body: unknown, status = 200): Response {
 // safe to expire after this, since no charge was placed.
 const STALE_NO_ID_MS = 120_000;
 
+// How long the STK prompt is worth waiting on before the reconciler owns it.
+const PROMPT_TTL_MS = 180_000;
+
+const SETTLED = ["failed", "expired", "manual_review"];
+
 type Payment = {
   id: string;
-  status: "pending" | "success" | "failed";
+  status: string;
   checkout_request_id: string | null;
   credits: number;
   created_at: string;
 };
+
+const PAYMENT_COLS = "id, status, checkout_request_id, credits, created_at";
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
@@ -102,7 +113,7 @@ Deno.serve(async (req: Request) => {
         return json({ ok: true, resumed: true, checkout_request_id: resolved.checkoutRequestId });
       }
       if (resolved.kind === "already_paid") {
-        return json({ ok: true, settled: "success", credits: resolved.credits });
+        return json({ ok: true, settled: "paid", credits: resolved.credits });
       }
       if (resolved.kind === "busy") {
         return json({ ok: false, code: "in_progress", message: "A payment is already being started. Please wait a moment." });
@@ -115,8 +126,17 @@ Deno.serve(async (req: Request) => {
     // status='pending') means a racing request fails here and loops to resume.
     const { data: row, error: insErr } = await admin
       .from("payments")
-      .insert({ user_id: user.id, phone: msisdn, amount_kes: amountInt, credits: creditsInt, status: "pending" })
-      .select("id, status, checkout_request_id, credits, created_at")
+      .insert({
+        user_id: user.id,
+        phone: msisdn,
+        // Server-authoritative expectation. The callback's reported amount is
+        // checked against this before a single credit is granted.
+        expected_amount_kes: amountInt,
+        credits: creditsInt,
+        status: "pending",
+        expires_at: new Date(Date.now() + PROMPT_TTL_MS).toISOString(),
+      })
+      .select(PAYMENT_COLS)
       .single();
     if (insErr) {
       if ((insErr as { code?: string }).code === "23505") continue; // concurrent pending → retry/resume
@@ -154,7 +174,7 @@ Deno.serve(async (req: Request) => {
 async function getPendingForUser(admin: SupabaseClient, userId: string): Promise<Payment | null> {
   const { data } = await admin
     .from("payments")
-    .select("id, status, checkout_request_id, credits, created_at")
+    .select(PAYMENT_COLS)
     .eq("user_id", userId)
     .eq("status", "pending")
     .order("created_at", { ascending: false })
@@ -175,33 +195,34 @@ async function resolveExisting(admin: SupabaseClient, p: Payment): Promise<Resol
   const ageMs = Date.now() - new Date(p.created_at).getTime();
 
   if (p.checkout_request_id) {
-    // Ask Daraja for the truth and settle if it's final.
+    // Ask Daraja for the truth. Only a confirmed FAILURE is settled here; a
+    // confirmed success is left to mpesa-stk-query, which is the only place
+    // that can check the receipt and amount the callback carries.
     let current = p;
     try {
       const token = await getAccessToken();
       const q = await stkQuery(token, p.checkout_request_id);
-      if (q.state !== "pending") {
+      if (q.state === "failed") {
         await admin.rpc("complete_payment", {
           p_checkout_request_id: p.checkout_request_id,
-          p_success: q.state === "success",
+          p_success: false,
           p_receipt: null,
+          p_reported_amount_kes: null,
           p_result_desc: q.desc,
         });
-        const { data } = await admin
-          .from("payments")
-          .select("id, status, checkout_request_id, credits, created_at")
-          .eq("id", p.id)
-          .single();
+        const { data } = await admin.from("payments").select(PAYMENT_COLS).eq("id", p.id).single();
         if (data) current = data as Payment;
       }
+      // q.state === "success" → the money moved. Never start a second charge.
     } catch (e) {
       console.error("reconcile query failed", e);
     }
 
-    if (current.status === "success") return { kind: "already_paid", credits: current.credits };
-    if (current.status === "failed") return { kind: "cleared" };
-    // Still pending: a live or still-processing prompt. Keep waiting on it —
-    // starting a new push here is what causes double charges.
+    if (current.status === "paid") return { kind: "already_paid", credits: current.credits };
+    if (SETTLED.includes(current.status)) return { kind: "cleared" };
+    // Still pending or reconciling: a live prompt, or one whose callback has
+    // landed and is awaiting confirmation. Keep waiting on it — starting a new
+    // push here is what causes double charges.
     return { kind: "resume", checkoutRequestId: current.checkout_request_id! };
   }
 

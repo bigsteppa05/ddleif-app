@@ -23,6 +23,12 @@ import { WebShell } from '@/components/web/WebShell';
 
 type PayState = 'idle' | 'requesting' | 'waiting' | 'success' | 'failed';
 
+// Server-side settlement vocabulary. 'reconciling' counts as in-flight on
+// purpose: the M-Pesa callback has arrived, but nothing is credited until the
+// server has independently confirmed it with Safaricom, so the UI keeps waiting
+// rather than declaring a result the balance doesn't back yet.
+const IN_FLIGHT = ['pending', 'reconciling'];
+
 const POLL_INTERVAL_MS = 3000;
 const POLL_TIMEOUT_MS = 120_000; // STK prompts expire after ~60-90s
 // If the callback hasn't settled the row by this point, start asking Daraja
@@ -82,7 +88,7 @@ export default function TopUpScreen() {
         .from('payments')
         .select('checkout_request_id, created_at')
         .eq('user_id', user.id)
-        .eq('status', 'pending')
+        .in('status', IN_FLIGHT)
         .not('checkout_request_id', 'is', null)
         .order('created_at', { ascending: false })
         .limit(1)
@@ -140,6 +146,22 @@ export default function TopUpScreen() {
     }
   }
 
+  // Map a settled server status onto the UI. 'manual_review' is neither a win
+  // nor a loss: M-Pesa and our records disagree, or a payment couldn't be
+  // confirmed, so a human is deciding. Never tell the user it simply failed —
+  // their money may well have moved.
+  function settleFromServer(status: string, credits?: number, resultDesc?: string) {
+    if (status === 'paid') return settle('success', credits);
+    if (status === 'manual_review') {
+      if (pollTimer.current) clearInterval(pollTimer.current);
+      setPayState('failed');
+      setToastMsg('We’re still confirming this payment with M-Pesa. If you were debited, your credits will appear once it clears — check Credit History.');
+      track('topup_manual_review', { reason: resultDesc ?? 'unknown' });
+      return;
+    }
+    settle('failed', undefined, resultDesc);
+  }
+
   // Ask the server to reconcile this payment against M-Pesa directly. Used as a
   // fallback when the callback is late/missing; it settles the row idempotently.
   async function reconcile(checkoutRequestId: string) {
@@ -161,8 +183,8 @@ export default function TopUpScreen() {
         .eq('checkout_request_id', checkoutRequestId)
         .single();
 
-      if (data && data.status !== 'pending') {
-        settle(data.status as 'success' | 'failed', data.credits, data.result_desc);
+      if (data && !IN_FLIGHT.includes(data.status)) {
+        settleFromServer(data.status, data.credits, data.result_desc);
         return;
       }
 
@@ -182,10 +204,8 @@ export default function TopUpScreen() {
           .select('status, result_desc, credits')
           .eq('checkout_request_id', checkoutRequestId)
           .single();
-        if (final?.status === 'success') {
-          settle('success', final.credits);
-        } else if (final?.status === 'failed') {
-          settle('failed', undefined, final.result_desc);
+        if (final && !IN_FLIGHT.includes(final.status)) {
+          settleFromServer(final.status, final.credits, final.result_desc);
         } else {
           setPayState('failed');
           setToastMsg('Still confirming your payment. If your M-Pesa was debited, your credits will appear shortly — check Credit History.');
@@ -217,7 +237,7 @@ export default function TopUpScreen() {
       return;
     }
     // A previous top-up completed while we were away — treat as done.
-    if (data?.settled === 'success') {
+    if (data?.settled === 'paid') {
       setPayState('success');
       setToastMsg(`${data.credits ?? ''} credits added to your account! 🎉`.trim());
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
