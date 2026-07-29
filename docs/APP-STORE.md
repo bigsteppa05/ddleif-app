@@ -95,7 +95,7 @@ confirm it:
 >
 > **Reviewer login (no OTP needed).** Use the demo account below. It signs in with
 > **email + password** (`signInWithPassword`), so no email one-time code is required.
-> - Email: `applereviewer@icloud.com`
+> - Email: `applereviewer3000@icloud.com`
 > - Password: *(entered directly in App Store Connect → App Review Information —
 >   never committed to this repo)*
 >
@@ -128,15 +128,19 @@ Create and keep stable for the whole review window:
 
 | Field | Value | Status |
 |---|---|---|
-| Email | `applereviewer@icloud.com` | ✅ created, confirmed |
+| Email | `applereviewer3000@icloud.com` | ✅ created, confirmed |
 | Password | set in ASC only — never in git | ⚠️ see note below |
 | Login method | Email + **password** (`login.tsx` → `signInWithPassword`) | ✅ |
-| Credits preloaded | **30** (6 bookings at 5 credits) | ✅ |
+| Credits preloaded | **30** (6 bookings at 5 credits) | ✅ set 2026-07-29 |
 | Live event | `Thursday Night Football — FF03`, 2026-08-27 20:00, 5 credits, 20 slots | ✅ |
-| Event visibility | `review_only`, scoped to the reviewer only | ✅ verified |
+| Event visibility | `review_only`, scoped to the reviewer only | ✅ re-scoped 2026-07-29 |
 | Cancellation | Allowed — `cancel_booking` refunds in full outside 12h of start | ☐ verify on device |
 | Account deletion | Allowed | ☐ verify on device |
 | Attendees on this event | none — nothing to hide | ✅ |
+
+> Do not hand-maintain this table. Run the check in
+> [§5.1](#51-the-reviewer-environment-is-single-use) — it reads the live database,
+> and it is the reason the two rows above are corrected rather than still green.
 
 `hide_attendees` was considered for a cleaner demo but **not** enabled: it is a
 global flag (`useFlag` in `EventCard`, `WEventCard`, `event/[id]`,
@@ -158,6 +162,65 @@ paths — all four return empty for this event.
 - [ ] Verified the account signs in **without an email OTP** from a different device.
 - [ ] Confirmed no cleanup job resets the reviewer's credits or deletes the live session mid-review.
 - [ ] Credentials entered in ASC → App Review Information, and pasted in the review notes.
+
+### 5.1 The reviewer environment is single-use
+
+**It destroys itself, by design.** `events_visible_to_user_id_fkey` is
+`ON DELETE SET NULL`, and §4 asks the reviewer to delete their account to
+demonstrate Guideline 5.1.1(v). That deletion removes the account **and** silently
+nulls the demo event's `visible_to_user_id`. Since `events_select_visible` admits a
+`review_only` row only when `visible_to_user_id = auth.uid()`, the event then
+becomes invisible to every non-admin — so the next reviewer meets a dead login and
+an empty feed. This is what happened between the first setup and 2026-07-29.
+
+The FK behaviour is left alone on purpose: a CHECK forbidding a NULL owner on a
+`review_only` row would make account deletion fail, and in-app deletion is itself
+an App Store requirement. So the guard is procedural — re-scope and assert, never
+assume.
+
+**Before every submission _and every resubmission_**, run these two in the SQL
+editor (or via the Supabase MCP). Both are admin-only: `EXECUTE` is revoked from
+`anon` and `authenticated`, so neither is reachable through the API.
+
+```sql
+select * from public.scope_review_event(
+  'applereviewer3000@icloud.com', 'thursday-night-football-ff03-b0d3');
+```
+
+```sql
+select * from public.review_env_check(
+  'applereviewer3000@icloud.com', 'thursday-night-football-ff03-b0d3');
+```
+
+`review_env_check()` returns one row per assertion. **Any `FAIL` means do not
+submit.** It asserts the account exists, is confirmed, and carries the `email`
+provider (so `signInWithPassword` works and no OTP is needed); that a profile
+exists with enough credits to book, cancel, and book again; that the event is
+`review_only`, correctly scoped, still in the future, and has open slots; and that
+the reviewer starts with no active bookings.
+
+The three `rls_*` rows are the ones that matter most, because they are the only
+assertions that reproduce what the client actually sees:
+
+| Assertion | Why |
+|---|---|
+| `rls_visible_to_reviewer` | The reviewer can really see the event. A NULL scope fails here — nothing else catches it. |
+| `rls_hidden_from_stranger` | Backs the "not publicly listed" claim in the review notes. |
+| `rls_hidden_from_anon` | The event stays out of anonymous web/SEO reads. |
+
+Those probes switch into the real `authenticated` and `anon` roles inside the
+transaction. That role switch is why both functions are `SECURITY INVOKER`:
+Postgres refuses `set_config('role', ...)` inside a security-definer function, and
+evaluating the policy as the table owner would pass regardless of scoping, because
+that role has `BYPASSRLS`.
+
+`review_env_check()` also fails if the reviewer is an **admin** — an admin
+satisfies `events_select_visible` through its `is_admin` branch, which would mask a
+broken scope behind a green result.
+
+> **Not covered:** whether the ASC password still matches the account. Nothing in
+> the database can verify that; confirm it by signing in from a device that has
+> never held a session.
 
 ---
 
@@ -329,7 +392,7 @@ past launch, it stays restricted to that one named key — never widen it back t
 | 2 | One real M-Pesa top-up: pending → reconciling → paid, replay-safe | ☐ |
 | 2 | `mpesa-sweep` key + Vault entry set, sweep runs clean | ☐ |
 | 2 | `gate2-check` key + function deleted (or restricted to its own key) | ☐ |
-| 3 | Reviewer account (password login, preloaded credits, live event) | ☐ |
+| 3 | Reviewer account (password login, preloaded credits, live event) | ✅ `review_env_check()` all-PASS 2026-07-29 · re-run before every submit |
 | 4 | ASC metadata + App Privacy + screenshots + review notes | ☐ |
 | 5 | Two TestFlight full-journey runs + Apple-revocation QA | ☐ |
 | — | EAS build log confirms Xcode 26 / iOS 26 SDK | ☐ |
