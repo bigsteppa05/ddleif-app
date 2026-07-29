@@ -25,6 +25,8 @@ export type AppConfig = {
   /** Boolean feature switches, read via useFlag('name'). */
   feature_flags: Record<string, boolean>;
   kes_per_credit: number;
+  /** Smallest top-up allowed, in credits. Enforced on the client and server. */
+  min_credits: number;
   credit_packs: CreditPack[];
   /** Master switch for the top-up flow. */
   payments_live: boolean;
@@ -33,17 +35,17 @@ export type AppConfig = {
   content: Record<string, string>;
 };
 
-// Mirrors the seeded row in the create_app_config migration and the old baked-in
-// constants (PAYMENTS_ENABLED=false, KES_PER_CREDIT=10).
+// Mirrors the seeded row in public.app_config. Pricing: 1 credit = KES 10, no
+// discounts, minimum 25 credits per top-up.
 export const DEFAULT_CONFIG: AppConfig = {
   theme: {},
   feature_flags: {},
   kes_per_credit: 10,
+  min_credits: 25,
   credit_packs: [
-    { credits: 10, discount: 0 },
     { credits: 25, discount: 0 },
-    { credits: 50, discount: 0.05, label: '5% off' },
-    { credits: 100, discount: 0.1, label: '10% off' },
+    { credits: 50, discount: 0 },
+    { credits: 100, discount: 0 },
   ],
   payments_live: false,
   banner: null,
@@ -60,6 +62,7 @@ function merge(raw: Partial<AppConfig> | null | undefined): AppConfig {
     theme: raw.theme ?? DEFAULT_CONFIG.theme,
     feature_flags: raw.feature_flags ?? DEFAULT_CONFIG.feature_flags,
     kes_per_credit: Number(raw.kes_per_credit ?? DEFAULT_CONFIG.kes_per_credit),
+    min_credits: Number(raw.min_credits ?? DEFAULT_CONFIG.min_credits),
     credit_packs: Array.isArray(raw.credit_packs) ? raw.credit_packs : DEFAULT_CONFIG.credit_packs,
     payments_live: !!raw.payments_live,
     banner: raw.banner ?? null,
@@ -101,7 +104,7 @@ async function writeCachedConfig(cfg: AppConfig): Promise<void> {
 export async function fetchAppConfig(): Promise<AppConfig> {
   const { data, error } = await supabase
     .from('app_config')
-    .select('theme, feature_flags, kes_per_credit, credit_packs, payments_live, banner, content')
+    .select('theme, feature_flags, kes_per_credit, min_credits, credit_packs, payments_live, banner, content')
     .eq('id', 1)
     .maybeSingle();
   if (error || !data) throw error ?? new Error('app_config not found');
@@ -124,6 +127,7 @@ export async function updateAppConfig(patch: Partial<AppConfig>): Promise<void> 
   if (patch.theme !== undefined) row.theme = patch.theme;
   if (patch.feature_flags !== undefined) row.feature_flags = patch.feature_flags;
   if (patch.kes_per_credit !== undefined) row.kes_per_credit = patch.kes_per_credit;
+  if (patch.min_credits !== undefined) row.min_credits = patch.min_credits;
   if (patch.credit_packs !== undefined) row.credit_packs = patch.credit_packs;
   if (patch.payments_live !== undefined) row.payments_live = patch.payments_live;
   if (patch.banner !== undefined) row.banner = patch.banner;

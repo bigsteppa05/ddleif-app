@@ -171,7 +171,6 @@ export default function ProfileScreen() {
   const router = useRouter();
   const isDesktop = useIsDesktopWeb();
   const config = useAppConfig();
-  const paymentsLive = config.payments_live;
   const [notifications, setNotifications] = useState(false);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -250,26 +249,6 @@ export default function ProfileScreen() {
     );
   }
 
-  function handleDeactivate() {
-    Alert.alert(
-      'Deactivate your account?',
-      "You won't be able to log in. Contact support to reactivate.",
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Deactivate',
-          style: 'destructive',
-          onPress: async () => {
-            if (!userId) return;
-            await updateProfile(userId, { deactivated_at: new Date().toISOString() });
-            await supabase.auth.signOut();
-            router.replace('/(auth)/login');
-          },
-        },
-      ]
-    );
-  }
-
   const joinedYear = profile?.created_at
     ? new Date(profile.created_at).getFullYear()
     : '';
@@ -300,15 +279,6 @@ export default function ProfileScreen() {
         router.replace('/(auth)/login');
       }
     };
-    const webDeactivate = async () => {
-      if (!userId) return;
-      if (typeof window !== 'undefined' && window.confirm("Deactivate your account? You won't be able to log in. Contact support to reactivate.")) {
-        await updateProfile(userId, { deactivated_at: new Date().toISOString() });
-        await supabase.auth.signOut();
-        router.replace('/(auth)/login');
-      }
-    };
-
     return (
       <View>
         <PageTitle title="Profile" />
@@ -347,7 +317,9 @@ export default function ProfileScreen() {
                   <Text style={{ fontSize: 15.5, fontWeight: '800', color: FW.text }}>{profile?.credits ?? 0} credits</Text>
                   <Text style={{ fontSize: 12.5, color: FW.sec, marginTop: 2 }}>1 credit = KES {config.kes_per_credit}</Text>
                 </View>
-                <WBtn label={paymentsLive ? 'Top up' : 'Coming soon'} size="sm" onPress={() => router.push('/credits/topup')} />
+                {config.payments_live && (
+                  <WBtn label="Top up" size="sm" onPress={() => router.push('/credits/topup')} />
+                )}
               </View>
             </View>
 
@@ -366,7 +338,9 @@ export default function ProfileScreen() {
                 />
               </WebSettingsGroup>
               <WebSettingsGroup title="Credits">
-                <WebSettingsRow label={paymentsLive ? 'Top up credits' : 'Top up credits (coming soon)'} onPress={() => router.push('/credits/topup')} />
+                {config.payments_live && (
+                  <WebSettingsRow label="Top up credits" onPress={() => router.push('/credits/topup')} />
+                )}
                 <WebSettingsRow label="Transaction history" onPress={() => router.push('/credits/history')} last />
               </WebSettingsGroup>
               {(isAdmin || profile?.can_check_in) && (
@@ -384,7 +358,7 @@ export default function ProfileScreen() {
               </WebSettingsGroup>
               <WebSettingsGroup title="Session">
                 <WebSettingsRow label="Sign out" danger onPress={webSignOut} />
-                <WebSettingsRow label="Deactivate account" danger onPress={webDeactivate} last />
+                <WebSettingsRow label="Delete account" danger onPress={() => router.push('/profile/delete-account')} last />
               </WebSettingsGroup>
             </View>
           </View>
@@ -442,13 +416,15 @@ export default function ProfileScreen() {
                 <Text style={styles.creditsKey}>Balance</Text>
                 <Text style={styles.creditsVal}>{profile?.credits ?? 0} Credits</Text>
               </View>
-              <TouchableOpacity
-                style={styles.topUpButton}
-                onPress={() => router.push('/credits/topup')}
-                activeOpacity={0.85}
-              >
-                <Text style={styles.topUpText}>Top Up Account</Text>
-              </TouchableOpacity>
+              {config.payments_live && (
+                <TouchableOpacity
+                  style={styles.topUpButton}
+                  onPress={() => router.push('/credits/topup')}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.topUpText}>Top Up Account</Text>
+                </TouchableOpacity>
+              )}
               <View style={styles.divider} />
               <MenuRow
                 label="Transaction History"
@@ -522,12 +498,12 @@ export default function ProfileScreen() {
                 </>
               )}
               <View style={styles.divider} />
-              <TouchableOpacity style={menuStyles.row} onPress={handleDeactivate}>
-                <Text style={[menuStyles.label, { color: Colors.error }]}>Deactivate Account</Text>
-              </TouchableOpacity>
-              <View style={styles.divider} />
               <TouchableOpacity style={menuStyles.row} onPress={handleSignOut}>
                 <Text style={[menuStyles.label, { color: Colors.primary }]}>Sign Out</Text>
+              </TouchableOpacity>
+              <View style={styles.divider} />
+              <TouchableOpacity style={menuStyles.row} onPress={() => router.push('/profile/delete-account')}>
+                <Text style={[menuStyles.label, { color: Colors.error }]}>Delete Account</Text>
               </TouchableOpacity>
             </View>
           </>
@@ -548,16 +524,6 @@ export default function ProfileScreen() {
             <Text style={langStyles.langText}>English</Text>
             <Ionicons name="checkmark" size={18} color={Colors.primary} />
           </TouchableOpacity>
-          <View style={langStyles.divider} />
-          {['Swahili', 'French', 'Arabic'].map((lang) => (
-            <View key={lang}>
-              <View style={langStyles.row}>
-                <Text style={langStyles.langTextMuted}>{lang}</Text>
-                <Text style={langStyles.comingSoon}>Coming soon</Text>
-              </View>
-              <View style={langStyles.divider} />
-            </View>
-          ))}
         </Animated.View>
       </Modal>
     </View>
@@ -644,7 +610,5 @@ const langStyles = StyleSheet.create({
   title: { color: Colors.textPrimary, fontSize: 18, fontWeight: '700', marginBottom: 8 },
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 16 },
   langText: { color: Colors.textPrimary, fontSize: 15, fontWeight: '500' },
-  langTextMuted: { color: Colors.textMuted, fontSize: 15 },
-  comingSoon: { color: Colors.textMuted, fontSize: 12 },
   divider: { height: 1, backgroundColor: Colors.border },
 });

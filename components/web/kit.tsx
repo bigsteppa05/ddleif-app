@@ -256,13 +256,18 @@ export function Sidebar({ admin, profileName, profileUsername, credits, onSignOu
               <Text style={kit.creditsValue}>{credits}</Text>
               <Text style={{ fontSize: 12.5, color: FW.muted }}>cr</Text>
             </View>
-            <Pressable
-              onPress={onTopUp}
-              style={({ hovered }) => [kit.topUpBtn, hovered && { opacity: 0.88 }]}
-            >
-              <Ionicons name="time-outline" size={14} color="#0C0C0C" />
-              <Text style={{ color: '#0C0C0C', fontSize: 13, fontWeight: '800' }}>Coming soon</Text>
-            </Pressable>
+            {/* Rendered only when the caller supplies onTopUp, i.e. payments are
+                live. A disabled or "coming soon" button is worse than no button:
+                App Review treats placeholder UI as incomplete functionality. */}
+            {onTopUp && (
+              <Pressable
+                onPress={onTopUp}
+                style={({ hovered }) => [kit.topUpBtn, hovered && { opacity: 0.88 }]}
+              >
+                <Ionicons name="add-circle-outline" size={14} color="#0C0C0C" />
+                <Text style={{ color: '#0C0C0C', fontSize: 13, fontWeight: '800' }}>Top up</Text>
+              </Pressable>
+            )}
           </View>
         )}
         <View style={kit.userRow}>

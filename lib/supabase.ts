@@ -74,6 +74,10 @@ export type Event = {
   image_url: string | null;
   is_free: boolean;
   created_at: string;
+  // 'review_only' events are visible solely to `visible_to_user_id` (and admins).
+  // Enforced by RLS, not by the client — see the events_select_visible policy.
+  visibility: 'public' | 'review_only';
+  visible_to_user_id: string | null;
 };
 
 export type Booking = {
@@ -168,6 +172,7 @@ export async function getAllEventSlugs(): Promise<string[]> {
   const { data, error } = await supabase
     .from('events')
     .select('slug')
+    .eq('visibility', 'public')
     .not('slug', 'is', null);
   if (error) return [];
   return (data ?? []).map((r) => r.slug as string);
@@ -277,7 +282,7 @@ export type Payment = {
   id: string;
   user_id: string;
   phone: string;
-  amount_kes: number;
+  expected_amount_kes: number;
   credits: number;
   status: string;
   mpesa_receipt: string | null;
@@ -288,9 +293,9 @@ export type Payment = {
 export async function getUserPayments(userId: string): Promise<Payment[]> {
   const { data, error } = await supabase
     .from('payments')
-    .select('id, user_id, phone, amount_kes, credits, status, mpesa_receipt, created_at, completed_at')
+    .select('id, user_id, phone, expected_amount_kes, credits, status, mpesa_receipt, created_at, completed_at')
     .eq('user_id', userId)
-    .eq('status', 'success')
+    .eq('status', 'paid')
     .order('created_at', { ascending: false });
   if (error) return [];
   return (data ?? []) as Payment[];
@@ -379,6 +384,17 @@ export async function updateProfile(
     .update(data)
     .eq('id', userId);
   if (error) throw new Error(error.message);
+}
+
+// Permanently delete the signed-in user's account + data (App Store 5.1.1(v)).
+// Runs server-side (delete-account edge function), then signs out locally.
+export async function deleteAccount(): Promise<{ error: string | null }> {
+  const { data, error } = await supabase.functions.invoke('delete-account', { body: {} });
+  if (error || !data?.ok) {
+    return { error: (data as { message?: string })?.message ?? 'Could not delete your account. Please try again.' };
+  }
+  await supabase.auth.signOut();
+  return { error: null };
 }
 
 // Throws on failure so callers can surface the error; files live under

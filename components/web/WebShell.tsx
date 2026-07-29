@@ -4,6 +4,7 @@ import { View, ScrollView } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { supabase, getUserProfile, type Profile } from '@/lib/supabase';
 import { onCreditsChanged } from '@/lib/credits';
+import { useAppConfig } from '@/components/AppConfigProvider';
 import { FW, Sidebar } from './kit';
 
 export function WebShell({ children, admin, maxWidth = 1104, padTop = 44 }: {
@@ -11,6 +12,8 @@ export function WebShell({ children, admin, maxWidth = 1104, padTop = 44 }: {
 }) {
   const router = useRouter();
   const [profile, setProfile] = useState<Profile | null>(null);
+  // Omitting onTopUp hides the sidebar's top-up button outright.
+  const paymentsLive = useAppConfig().payments_live;
 
   useFocusEffect(
     useCallback(() => {
@@ -35,7 +38,7 @@ export function WebShell({ children, admin, maxWidth = 1104, padTop = 44 }: {
         profileUsername={profile?.username}
         credits={profile?.credits ?? 0}
         onSignOut={() => supabase.auth.signOut()}
-        onTopUp={() => router.push('/credits/topup')}
+        onTopUp={paymentsLive ? () => router.push('/credits/topup') : undefined}
       />
       <ScrollView
         style={{ flex: 1 }}

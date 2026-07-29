@@ -8,6 +8,7 @@ import { DEV_BYPASS_AUTH } from '@/constants/dev';
 import { CookieConsent } from '@/components/CookieConsent';
 import { AppConfigProvider } from '@/components/AppConfigProvider';
 import { useOTAUpdates } from '@/lib/useOTAUpdates';
+import { identifyUser, resetAnalytics } from '@/lib/analytics';
 
 export default function RootLayout() {
   const router = useRouter();
@@ -55,7 +56,10 @@ export default function RootLayout() {
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       setIsLoggedIn(!!session);
+      // Tie analytics to the Supabase user id (no PII), clear it on sign-out.
+      if (session?.user) identifyUser(session.user.id);
       if (event === 'SIGNED_OUT') {
+        resetAnalytics();
         router.replace('/(auth)/welcome');
       } else if (event === 'SIGNED_IN' && session) {
         // Don't redirect mid-registration — let the register screen handle its own flow
@@ -102,6 +106,7 @@ export default function RootLayout() {
         <Stack.Screen name="admin" />
         <Stack.Screen name="checkin" />
         <Stack.Screen name="profile/edit" />
+        <Stack.Screen name="profile/delete-account" />
         <Stack.Screen name="credits/topup" />
         <Stack.Screen name="credits/history" />
         <Stack.Screen

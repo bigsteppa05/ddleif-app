@@ -20,6 +20,7 @@ import { Dropdown } from '@/components/Dropdown';
 import { DatePicker } from '@/components/DatePicker';
 import { Colors } from '@/constants/colors';
 import { notify } from '@/lib/ui';
+import { pickImageFromLibrary } from '@/lib/media';
 import { GENDERS, COUNTRIES, VISIBILITY_OPTIONS } from '@/lib/options';
 
 type Form = {
@@ -133,32 +134,8 @@ export default function EditProfileScreen() {
   }
 
   async function pickAvatar() {
-    if (isWeb) {
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = 'image/jpeg,image/png,image/webp';
-      input.onchange = () => {
-        const file = input.files?.[0];
-        if (file) set('avatarUri', URL.createObjectURL(file));
-      };
-      input.click();
-      return;
-    }
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const ImagePicker = require('expo-image-picker');
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [1, 1],
-        quality: 0.8,
-      });
-      if (!result.canceled && result.assets[0]) {
-        set('avatarUri', result.assets[0].uri);
-      }
-    } catch {
-      notify('Not available', 'Image picker requires a native build.');
-    }
+    const uri = await pickImageFromLibrary({ aspect: [1, 1], quality: 0.8 });
+    if (uri) set('avatarUri', uri);
   }
 
   async function handleSave() {

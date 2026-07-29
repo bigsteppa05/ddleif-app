@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '@/constants/colors';
 import { scheduleBookingConfirmation, scheduleEventReminder } from '@/lib/notifications';
+import { track } from '@/lib/analytics';
 import { FW, WBtn, WGhostBtn, WTag, useIsDesktopWeb } from '@/components/web/kit';
 import { WebShell } from '@/components/web/WebShell';
 
@@ -24,6 +25,7 @@ export default function BookingConfirmedScreen() {
     }>();
 
   useEffect(() => {
+    track('booking_confirmed', { sport: sport || undefined });
     if (!title || Platform.OS === 'web') return;
     scheduleBookingConfirmation(title);
     if (date && bookingId && location) {

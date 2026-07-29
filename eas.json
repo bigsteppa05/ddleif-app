@@ -29,7 +29,8 @@
         "buildType": "app-bundle"
       },
       "ios": {
-        "credentialsSource": "remote"
+        "credentialsSource": "remote",
+        "image": "latest"
       }
     }
   },
@@ -41,8 +42,8 @@
       },
       "ios": {
         "appleId": "habibforderiv05@gmail.com",
-        "ascAppId": "",
-        "appleTeamId": ""
+        "ascAppId": "6793594264",
+        "appleTeamId": "3N9VTGVH39"
       }
     }
   }

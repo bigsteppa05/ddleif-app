@@ -63,6 +63,7 @@ export default function AdminConfigScreen() {
   // Local editable copies seeded from the live config.
   const [paymentsLive, setPaymentsLive] = useState(config.payments_live);
   const [kesPerCredit, setKesPerCredit] = useState(String(config.kes_per_credit));
+  const [minCredits, setMinCredits] = useState(String(config.min_credits));
   const [flags, setFlags] = useState<Record<string, boolean>>(config.feature_flags);
   const [newFlag, setNewFlag] = useState('');
   const [content, setContent] = useState<Record<string, string>>(config.content);
@@ -83,6 +84,11 @@ export default function AdminConfigScreen() {
       notify('Invalid price', 'KES per credit must be a positive number.');
       return;
     }
+    const min = Math.round(Number(minCredits));
+    if (!isFinite(min) || min < 1) {
+      notify('Invalid minimum', 'Minimum credits must be a positive whole number.');
+      return;
+    }
     // Validate packs JSON.
     let packs: CreditPack[];
     try {
@@ -99,6 +105,7 @@ export default function AdminConfigScreen() {
       await updateAppConfig({
         payments_live: paymentsLive,
         kes_per_credit: kes,
+        min_credits: min,
         feature_flags: flags,
         content,
         credit_packs: packs,
@@ -151,6 +158,18 @@ export default function AdminConfigScreen() {
             onChangeText={setKesPerCredit}
             keyboardType="number-pad"
             placeholder="10"
+            placeholderTextColor={Colors.textMuted}
+          />
+        </View>
+        <View style={styles.divider} />
+        <View style={styles.row}>
+          <Text style={styles.rowLabel}>Minimum credits per top-up</Text>
+          <TextInput
+            style={styles.numInput}
+            value={minCredits}
+            onChangeText={setMinCredits}
+            keyboardType="number-pad"
+            placeholder="25"
             placeholderTextColor={Colors.textMuted}
           />
         </View>

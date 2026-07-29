@@ -8,7 +8,7 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "runtimeVersion": {
-      "policy": "appVersion"
+      "policy": "fingerprint"
     },
     "updates": {
       "enabled": true,
@@ -18,7 +18,38 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.fitxball.app"
+      "bundleIdentifier": "com.fitxball.app",
+      "config": {
+        "usesNonExemptEncryption": false
+      },
+      "privacyManifests": {
+        "NSPrivacyAccessedAPITypes": [
+          {
+            "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryUserDefaults",
+            "NSPrivacyAccessedAPITypeReasons": [
+              "CA92.1"
+            ]
+          },
+          {
+            "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryFileTimestamp",
+            "NSPrivacyAccessedAPITypeReasons": [
+              "C617.1"
+            ]
+          },
+          {
+            "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategorySystemBootTime",
+            "NSPrivacyAccessedAPITypeReasons": [
+              "35F9.1"
+            ]
+          },
+          {
+            "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryDiskSpace",
+            "NSPrivacyAccessedAPITypeReasons": [
+              "E174.1"
+            ]
+          }
+        ]
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -28,7 +59,10 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.fitxball.app"
+      "package": "com.fitxball.app",
+      "blockedPermissions": [
+        "android.permission.SYSTEM_ALERT_WINDOW"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png",
@@ -49,13 +83,16 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "fitXball uses the camera to scan entry QR codes when checking players in at events."
+          "cameraPermission": "fitXball uses the camera to scan entry QR codes when checking players in at events.",
+          "microphonePermission": false,
+          "recordAudioAndroid": false
         }
       ],
       [
         "expo-image-picker",
         {
-          "photosPermission": "fitXball needs access to your photos so you can set your profile picture and upload event images."
+          "photosPermission": "fitXball needs access to your photos so you can set your profile picture and upload event images.",
+          "microphonePermission": false
         }
       ],
       "expo-web-browser",
@@ -67,7 +104,8 @@
           "resizeMode": "contain",
           "backgroundColor": "#012E3F"
         }
-      ]
+      ],
+      "expo-localization"
     ],
     "experiments": {
       "typedRoutes": true

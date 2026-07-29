@@ -48,3 +48,8 @@ google-play-key.json
 
 # local verification screenshots (test artifacts, not app source)
 reports/*.png
+
+# agent tooling — third-party skills + local preview config, not app source
+/.agents/
+/.claude/skills/
+/.claude/launch.json
